@@ -18,6 +18,11 @@ class Settings(BaseSettings):
 
     DATABASE_URL: Optional[str] = None
 
+    # JWT Authentication Settings
+    JWT_SECRET_KEY: str = "insightflow_super_secret_jwt_key_default_change_me_in_production"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
+
     @field_validator("DATABASE_URL", mode="after")
     @classmethod
     def assemble_db_connection(cls, v: Optional[str]) -> Optional[str]:
