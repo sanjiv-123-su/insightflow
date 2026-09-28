@@ -1,5 +1,5 @@
 import logging
-from typing import List
+from typing import List, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, File, UploadFile, status
@@ -7,8 +7,10 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.user import User
+from app.schemas.analytics import BusinessAnalyticsResponse, ColumnMappingConfig
 from app.schemas.dataset import DatasetResponse, DatasetUploadResponse
 from app.schemas.profiling import DataQualityResponse, DatasetProfileResponse
+from app.services.analytics import AnalyticsService
 from app.services.auth import AuthService
 from app.services.dataset import DatasetService
 
@@ -140,3 +142,72 @@ def get_dataset_quality(
     - Detailed quality metric scores (completeness, uniqueness, validity)
     """
     return DatasetService.get_dataset_quality(db=db, user=current_user, dataset_id=dataset_id)
+
+
+@router.get(
+    "/{dataset_id}/analytics",
+    response_model=BusinessAnalyticsResponse,
+    summary="Get business analytics and chart data for a dataset",
+    responses={
+        200: {"description": "Structured business analytics suitable for React charts"},
+        400: {"description": "Dataset does not support business analytics (e.g. no numeric/revenue columns)"},
+        401: {"description": "Authentication required"},
+        404: {"description": "Dataset not found or access denied"},
+    },
+)
+def get_dataset_analytics(
+    dataset_id: uuid.UUID,
+    current_user: User = Depends(AuthService.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Generate or retrieve business analytics for an uploaded dataset.
+
+    Automatically detects revenue, order, customer, date, category, product, and region columns.
+    Returns:
+    - KPIs: total revenue, total orders, unique customers, average order value (AOV), growth percentage
+    - Monthly trends: revenue by month with month-over-month growth rate
+    - Categorical & Regional distributions: revenue by category and region with percentages
+    - Leaderboards: top products and top customers by sales volume
+    """
+    return AnalyticsService.get_or_compute_analytics(
+        db=db,
+        user=current_user,
+        dataset_id=dataset_id,
+        custom_mapping=None,
+    )
+
+
+@router.post(
+    "/{dataset_id}/analytics",
+    response_model=BusinessAnalyticsResponse,
+    summary="Compute business analytics with custom column mappings",
+    responses={
+        200: {"description": "Structured business analytics with customized mappings"},
+        400: {"description": "Invalid column mapping or unsupported dataset"},
+        401: {"description": "Authentication required"},
+        404: {"description": "Dataset not found or access denied"},
+    },
+)
+def compute_dataset_analytics_with_mapping(
+    dataset_id: uuid.UUID,
+    mapping: Optional[ColumnMappingConfig] = None,
+    current_user: User = Depends(AuthService.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Recompute business analytics with custom or partially overridden column mappings.
+
+    Accepts custom mapping for:
+    - `revenue_column`
+    - `date_column`
+    - `order_id_column`
+    - `customer_id_column`
+    - `category_column`
+    - `product_column`
+    - `region_column`
+    """
+    return AnalyticsService.get_or_compute_analytics(
+        db=db,
+        user=current_user,
+        dataset_id=dataset_id,
+        custom_mapping=mapping,
+    )
