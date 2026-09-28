@@ -298,3 +298,12 @@ class FileStorageService:
                 file_path.unlink()
         except OSError as exc:
             logger.warning("Failed to delete file '%s': %s", file_path, exc)
+
+    @classmethod
+    def get_stored_file_path(cls, dataset_id: uuid.UUID) -> Optional[Path]:
+        """Locate stored file on disk matching dataset UUID prefix."""
+        upload_dir = settings.upload_path
+        matches = list(upload_dir.glob(f"{dataset_id}_*"))
+        if matches and matches[0].exists():
+            return matches[0]
+        return None

@@ -131,7 +131,7 @@ def test_upload_valid_csv_success():
     assert data["original_filename"] == "sales_q3.csv"
     assert data["file_type"] == "csv"
     assert data["file_size"] > 0
-    assert data["status"] == "pending"
+    assert data["status"] in ("completed", "pending")
     assert data["column_count"] == 4
     assert data["row_count"] == 10
     assert "created_at" in data
@@ -142,7 +142,7 @@ def test_upload_valid_csv_success():
         assert record is not None
         assert record.original_filename == "sales_q3.csv"
         assert record.file_type == "csv"
-        assert record.status == "pending"
+        assert record.status in ("completed", "pending")
 
     # Verify file stored on disk
     upload_dir = settings.upload_path
@@ -179,7 +179,7 @@ def test_upload_valid_xlsx_success():
     assert data["file_type"] == "xlsx"
     assert data["column_count"] == 3
     assert data["row_count"] == 8
-    assert data["status"] == "pending"
+    assert data["status"] in ("completed", "pending")
 
     upload_dir = settings.upload_path
     stored_files = list(upload_dir.glob(f"{dataset_id}_*"))
@@ -388,3 +388,132 @@ def test_get_dataset_not_found():
     random_id = str(uuid.uuid4())
     res = client.get(f"/datasets/{random_id}", headers=auth["headers"])
     assert res.status_code == 404
+
+
+# =========================================================================
+# Profiling Endpoint Tests
+# =========================================================================
+
+def test_get_dataset_profile_success():
+    """Verify GET /datasets/{id}/profile returns comprehensive column & dataset stats."""
+    auth = register_and_login("profile_user@insightflow.io")
+    csv_file = create_sample_csv(rows=10)
+
+    upload_res = client.post(
+        "/datasets/upload",
+        files={"file": ("profile_data.csv", csv_file, "text/csv")},
+        headers=auth["headers"],
+    )
+    assert upload_res.status_code == 201
+    dataset_id = upload_res.json()["id"]
+
+    profile_res = client.get(f"/datasets/{dataset_id}/profile", headers=auth["headers"])
+    assert profile_res.status_code == 200
+    data = profile_res.json()
+
+    assert data["dataset_id"] == dataset_id
+    assert "summary" in data
+    summary = data["summary"]
+    assert summary["row_count"] == 10
+    assert summary["column_count"] == 4
+    assert summary["duplicate_rows"] == 0
+    assert summary["total_missing_values"] == 0
+    assert 0.0 <= summary["overall_data_quality_score"] <= 100.0
+
+    assert "columns" in data
+    assert len(data["columns"]) == 4
+    col_names = {c["column_name"] for c in data["columns"]}
+    assert col_names == {"id", "feature_a", "feature_b", "target"}
+
+    # Check a numeric column profile
+    feature_b_col = next(c for c in data["columns"] if c["column_name"] == "feature_b")
+    assert feature_b_col["detected_data_type"] in ("float", "numeric")
+    assert feature_b_col["null_count"] == 0
+    assert feature_b_col["null_percentage"] == 0.0
+    assert feature_b_col["unique_count"] == 10
+    assert feature_b_col["minimum"] is not None
+    assert feature_b_col["maximum"] is not None
+    assert feature_b_col["mean"] is not None
+    assert feature_b_col["median"] is not None
+    assert len(feature_b_col["sample_values"]) > 0
+
+    assert "warnings" in data
+    assert "completely_empty_columns" in data["warnings"]
+    assert "high_null_columns" in data["warnings"]
+
+
+def test_get_dataset_profile_auth_and_isolation():
+    """Verify profile access requires authentication and respects user isolation."""
+    user_a = register_and_login("alice_p@insightflow.io")
+    user_b = register_and_login("bob_p@insightflow.io")
+
+    upload_res = client.post(
+        "/datasets/upload",
+        files={"file": ("secret.csv", create_sample_csv(rows=5), "text/csv")},
+        headers=user_a["headers"],
+    )
+    dataset_id = upload_res.json()["id"]
+
+    # 1. Unauthenticated -> 401
+    res_unauth = client.get(f"/datasets/{dataset_id}/profile")
+    assert res_unauth.status_code == 401
+
+    # 2. Other user -> 404
+    res_forbidden = client.get(f"/datasets/{dataset_id}/profile", headers=user_b["headers"])
+    assert res_forbidden.status_code == 404
+
+    # 3. Nonexistent -> 404
+    res_not_found = client.get(f"/datasets/{uuid.uuid4()}/profile", headers=user_a["headers"])
+    assert res_not_found.status_code == 404
+
+
+# =========================================================================
+# Quality Report Endpoint Tests
+# =========================================================================
+
+def test_get_dataset_quality_success():
+    """Verify GET /datasets/{id}/quality returns score and metric breakdown."""
+    auth = register_and_login("quality_user@insightflow.io")
+    csv_file = create_sample_csv(rows=12)
+
+    upload_res = client.post(
+        "/datasets/upload",
+        files={"file": ("quality_data.csv", csv_file, "text/csv")},
+        headers=auth["headers"],
+    )
+    assert upload_res.status_code == 201
+    dataset_id = upload_res.json()["id"]
+
+    quality_res = client.get(f"/datasets/{dataset_id}/quality", headers=auth["headers"])
+    assert quality_res.status_code == 200
+    data = quality_res.json()
+
+    assert data["dataset_id"] == dataset_id
+    assert 0.0 <= data["quality_score"] <= 100.0
+    assert data["missing_values"] == 0
+    assert data["duplicate_rows"] == 0
+    assert data["invalid_values"] == 0
+    assert "metrics" in data
+    assert data["metrics"]["completeness_score"] == 100.0
+    assert data["metrics"]["uniqueness_score"] == 100.0
+
+
+def test_get_dataset_quality_auth_and_isolation():
+    """Verify quality report requires authentication and isolates users."""
+    user_a = register_and_login("alice_q@insightflow.io")
+    user_b = register_and_login("bob_q@insightflow.io")
+
+    upload_res = client.post(
+        "/datasets/upload",
+        files={"file": ("isolated.csv", create_sample_csv(), "text/csv")},
+        headers=user_a["headers"],
+    )
+    dataset_id = upload_res.json()["id"]
+
+    # 1. Unauthenticated -> 401
+    res_unauth = client.get(f"/datasets/{dataset_id}/quality")
+    assert res_unauth.status_code == 401
+
+    # 2. Other user -> 404
+    res_other = client.get(f"/datasets/{dataset_id}/quality", headers=user_b["headers"])
+    assert res_other.status_code == 404

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.user import User
 from app.schemas.dataset import DatasetResponse, DatasetUploadResponse
+from app.schemas.profiling import DataQualityResponse, DatasetProfileResponse
 from app.services.auth import AuthService
 from app.services.dataset import DatasetService
 
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/datasets", tags=["Datasets"])
     status_code=status.HTTP_201_CREATED,
     summary="Upload a new dataset (CSV or XLSX)",
     responses={
-        201: {"description": "Dataset uploaded and registered successfully"},
+        201: {"description": "Dataset uploaded, profiled, and registered successfully"},
         400: {"description": "Invalid file format, empty file, or validation failure"},
         401: {"description": "Authentication required"},
         413: {"description": "File size exceeds maximum allowed threshold"},
@@ -34,13 +35,13 @@ async def upload_dataset(
     current_user: User = Depends(AuthService.get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Upload and validate a new dataset file.
+    """Upload, validate, and automatically profile a new dataset file.
 
     - Supported file formats: `.csv`, `.xlsx`
     - Maximum file size: Configured via `MAX_UPLOAD_SIZE_BYTES`
     - Only authenticated users can upload datasets.
     - Files are stored safely outside source code.
-    - Dataset record is persisted in Neon PostgreSQL.
+    - Dataset and profiling records are persisted in Neon PostgreSQL.
     """
     dataset = await DatasetService.upload_dataset(db=db, user=current_user, file=file)
     return dataset
@@ -87,3 +88,55 @@ def get_dataset(
     by other users return 404 Not Found.
     """
     return DatasetService.get_dataset(db=db, user=current_user, dataset_id=dataset_id)
+
+
+@router.get(
+    "/{dataset_id}/profile",
+    response_model=DatasetProfileResponse,
+    summary="Get complete automated profile for a dataset",
+    responses={
+        200: {"description": "Dataset profile including column-level statistics and warnings"},
+        401: {"description": "Authentication required"},
+        404: {"description": "Dataset not found or access denied"},
+    },
+)
+def get_dataset_profile(
+    dataset_id: uuid.UUID,
+    current_user: User = Depends(AuthService.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve complete automated profiling results for a dataset.
+
+    Calculates and returns:
+    - Dataset-level summary (row count, column count, duplicate rows, missing values, quality score)
+    - Column-level metrics (detected type, null count/percentage, unique count, min, max, mean, median, sample values)
+    - Warning detections (completely empty columns, high-null columns, duplicate rows)
+    """
+    return DatasetService.get_dataset_profile(db=db, user=current_user, dataset_id=dataset_id)
+
+
+@router.get(
+    "/{dataset_id}/quality",
+    response_model=DataQualityResponse,
+    summary="Get data quality report for a dataset",
+    responses={
+        200: {"description": "Data quality score and breakdown metrics"},
+        401: {"description": "Authentication required"},
+        404: {"description": "Dataset not found or access denied"},
+    },
+)
+def get_dataset_quality(
+    dataset_id: uuid.UUID,
+    current_user: User = Depends(AuthService.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve the data quality report and metrics breakdown for a dataset.
+
+    Returns:
+    - Overall data quality score (0.0 to 100.0)
+    - Total missing values
+    - Duplicate rows count
+    - Invalid values count
+    - Detailed quality metric scores (completeness, uniqueness, validity)
+    """
+    return DatasetService.get_dataset_quality(db=db, user=current_user, dataset_id=dataset_id)
