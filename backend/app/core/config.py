@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Optional
 
 from pydantic import field_validator
@@ -6,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(".env", "../.env"),
+        env_file=(".env", "../.env", "backend/.env"),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -22,6 +23,20 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = "insightflow_super_secret_jwt_key_default_change_me_in_production"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
+
+    # File Storage Settings
+    MAX_UPLOAD_SIZE_BYTES: int = 50 * 1024 * 1024  # 50 MB
+    UPLOAD_DIR: Optional[str] = None
+
+    @property
+    def upload_path(self) -> Path:
+        """Resolve the uploads directory path outside source-code directory."""
+        if self.UPLOAD_DIR:
+            p = Path(self.UPLOAD_DIR)
+        else:
+            p = Path(__file__).resolve().parents[3] / "storage" / "uploads"
+        p.mkdir(parents=True, exist_ok=True)
+        return p
 
     @field_validator("DATABASE_URL", mode="after")
     @classmethod
