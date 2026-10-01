@@ -1,4 +1,4 @@
-from app.services.analytics import AnalyticsEngine, AnalyticsService, ColumnDetector
+from app.services.analytics import AnalyticsEngine, AnalyticsService
 from app.services.auth import AuthService
 from app.services.dataset import DatasetService
 from app.services.file_storage import FileStorageService
@@ -9,7 +9,6 @@ __all__ = [
     "AnalyticsEngine",
     "AnalyticsService",
     "AuthService",
-    "ColumnDetector",
     "DataProfilerService",
     "DatasetService",
     "FileStorageService",

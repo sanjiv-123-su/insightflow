@@ -5,92 +5,102 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ColumnMappingConfig(BaseModel):
-    """Configurable column mapping provided by the user or auto-detected."""
-    revenue_column: Optional[str] = Field(default=None, description="Column containing revenue / sales / amount")
-    date_column: Optional[str] = Field(default=None, description="Column containing transaction / order date")
-    order_id_column: Optional[str] = Field(default=None, description="Column containing order / transaction ID")
-    customer_id_column: Optional[str] = Field(default=None, description="Column containing customer / client ID")
-    category_column: Optional[str] = Field(default=None, description="Column containing product category / department")
-    product_column: Optional[str] = Field(default=None, description="Column containing product / item name")
-    region_column: Optional[str] = Field(default=None, description="Column containing region / territory / country")
+class ColumnMappingInput(BaseModel):
+    """Optional user-defined column mapping to override auto-detection."""
+    revenue_column: Optional[str] = Field(None, description="Column representing revenue, sales, price, or monetary amount")
+    order_id_column: Optional[str] = Field(None, description="Column representing order, invoice, or transaction ID")
+    customer_column: Optional[str] = Field(None, description="Column representing customer name, ID, or email")
+    date_column: Optional[str] = Field(None, description="Column representing transaction or order date")
+    category_column: Optional[str] = Field(None, description="Column representing product category, department, or type")
+    region_column: Optional[str] = Field(None, description="Column representing geographic region, country, or state")
+    product_column: Optional[str] = Field(None, description="Column representing product name, title, or SKU")
+    quantity_column: Optional[str] = Field(None, description="Column representing item quantity or units sold")
 
 
 class DetectedColumnMapping(BaseModel):
-    """The resolved column mapping with detection status and confidence."""
+    """Detected or configured column mapping metadata."""
     revenue_column: Optional[str] = None
-    date_column: Optional[str] = None
     order_id_column: Optional[str] = None
-    customer_id_column: Optional[str] = None
+    customer_column: Optional[str] = None
+    date_column: Optional[str] = None
     category_column: Optional[str] = None
-    product_column: Optional[str] = None
     region_column: Optional[str] = None
-    auto_detected: bool = Field(default=True, description="Whether mapping was automatically inferred")
-    detected_roles: Dict[str, str] = Field(default_factory=dict, description="Mapped role to column name")
+    product_column: Optional[str] = None
+    quantity_column: Optional[str] = None
+    detected_automatically: bool = True
+    available_numeric_columns: List[str] = Field(default_factory=list)
+    available_categorical_columns: List[str] = Field(default_factory=list)
+    available_date_columns: List[str] = Field(default_factory=list)
 
 
-class KPIMetrics(BaseModel):
-    """High-level summary KPIs suitable for dashboard scorecards."""
-    total_revenue: float = Field(..., description="Total aggregated revenue across all records")
-    total_orders: int = Field(..., description="Total number of orders or transactions")
-    unique_customers: int = Field(..., description="Count of distinct customers")
-    average_order_value: float = Field(..., description="Average revenue per order (AOV)")
-    overall_growth_percentage: Optional[float] = Field(
-        default=None,
-        description="Latest month-over-month growth percentage where date data exists",
-    )
+class KpiMetrics(BaseModel):
+    """Headline business KPI metrics."""
+    total_revenue: float = Field(..., description="Sum of all revenue/sales transactions")
+    total_orders: int = Field(..., description="Total count of transactions or distinct orders")
+    unique_customers: Optional[int] = Field(None, description="Distinct count of customer identifiers")
+    average_order_value: float = Field(..., description="Total revenue divided by total orders")
+    growth_percentage: Optional[float] = Field(None, description="Latest period-over-period growth percentage")
 
 
-class MonthlyRevenueItem(BaseModel):
-    """Monthly revenue point suitable for React line/bar charts."""
-    month: str = Field(..., description="Month in YYYY-MM format")
-    revenue: float = Field(..., description="Revenue for the month")
-    orders: int = Field(..., description="Number of orders in the month")
-    growth_percentage: Optional[float] = Field(
-        default=None,
-        description="Month-over-month growth rate compared to prior month",
-    )
+class MonthlyRevenuePoint(BaseModel):
+    """Monthly time-series point structured for React line/area charts."""
+    period: str = Field(..., description="Year-month in YYYY-MM format")
+    revenue: float = Field(..., description="Monthly revenue sum")
+    orders: int = Field(..., description="Monthly order count")
+    growth_percentage: Optional[float] = Field(None, description="Month-over-month growth percentage")
 
 
-class CategoryRevenueItem(BaseModel):
-    """Category breakdown suitable for React bar/donut charts."""
-    category: str = Field(..., description="Category name")
-    revenue: float = Field(..., description="Total revenue for this category")
-    percentage: float = Field(..., description="Share of total revenue as percentage (0-100)")
+class CategoryRevenuePoint(BaseModel):
+    """Category breakdown point structured for React pie/donut/bar charts."""
+    category: str = Field(..., description="Product category name")
+    revenue: float = Field(..., description="Category revenue sum")
+    orders: int = Field(..., description="Order count in category")
+    percentage: float = Field(..., description="Share of total revenue (0-100%)")
 
 
-class RegionRevenueItem(BaseModel):
-    """Regional breakdown suitable for React choropleth/bar charts."""
-    region: str = Field(..., description="Region name")
-    revenue: float = Field(..., description="Total revenue for this region")
-    percentage: float = Field(..., description="Share of total revenue as percentage (0-100)")
+class RegionRevenuePoint(BaseModel):
+    """Regional breakdown point structured for React bar/geo charts."""
+    region: str = Field(..., description="Region or country name")
+    revenue: float = Field(..., description="Regional revenue sum")
+    orders: int = Field(..., description="Order count in region")
+    percentage: float = Field(..., description="Share of total revenue (0-100%)")
 
 
-class TopProductItem(BaseModel):
-    """Top product entry suitable for leaderboards/tables."""
+class TopProductPoint(BaseModel):
+    """Top-selling product structured for React leaderboard/tables."""
     product: str = Field(..., description="Product name or identifier")
-    revenue: float = Field(..., description="Total sales generated by product")
-    orders: int = Field(..., description="Frequency or order count")
+    revenue: float = Field(..., description="Total revenue generated by product")
+    orders: int = Field(..., description="Number of orders containing product")
+    units_sold: Optional[int] = Field(None, description="Total units sold if quantity available")
 
 
-class TopCustomerItem(BaseModel):
-    """Top customer entry suitable for leaderboards/tables."""
-    customer: str = Field(..., description="Customer identifier or name")
-    revenue: float = Field(..., description="Total spending by customer")
-    orders: int = Field(..., description="Total orders placed")
+class TopCustomerPoint(BaseModel):
+    """Top-spending customer structured for React leaderboard/tables."""
+    customer: str = Field(..., description="Customer name, ID, or email")
+    revenue: float = Field(..., description="Total spend by customer")
+    orders: int = Field(..., description="Number of purchases made")
+    average_spend: float = Field(..., description="Average spend per order")
 
 
-class BusinessAnalyticsResponse(BaseModel):
-    """Complete structured JSON analytics payload designed for React charts."""
+class GrowthSummary(BaseModel):
+    """Period growth summary for trend badges and cards."""
+    current_period: str
+    previous_period: str
+    growth_percentage: float
+    trend: str = Field(..., description="'positive', 'negative', or 'neutral'")
+
+
+class DatasetAnalyticsResponse(BaseModel):
+    """Comprehensive business analytics response suitable for React charts."""
     dataset_id: uuid.UUID
-    mapping: DetectedColumnMapping
-    kpis: KPIMetrics
-    revenue_by_month: List[MonthlyRevenueItem] = Field(default_factory=list)
-    revenue_by_category: List[CategoryRevenueItem] = Field(default_factory=list)
-    revenue_by_region: List[RegionRevenueItem] = Field(default_factory=list)
-    top_products: List[TopProductItem] = Field(default_factory=list)
-    top_customers: List[TopCustomerItem] = Field(default_factory=list)
-    supported_metrics: List[str] = Field(default_factory=list, description="List of metrics available from the dataset")
+    kpis: KpiMetrics
+    revenue_by_month: List[MonthlyRevenuePoint] = Field(default_factory=list)
+    revenue_by_category: List[CategoryRevenuePoint] = Field(default_factory=list)
+    revenue_by_region: List[RegionRevenuePoint] = Field(default_factory=list)
+    top_products: List[TopProductPoint] = Field(default_factory=list)
+    top_customers: List[TopCustomerPoint] = Field(default_factory=list)
+    growth_summary: Optional[GrowthSummary] = None
+    column_mapping: DetectedColumnMapping
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

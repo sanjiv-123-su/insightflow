@@ -2,12 +2,16 @@ import logging
 from typing import List, Optional
 import uuid
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.user import User
-from app.schemas.analytics import BusinessAnalyticsResponse, ColumnMappingConfig
+from app.schemas.analytics import (
+    ColumnMappingInput,
+    DatasetAnalyticsResponse,
+    DetectedColumnMapping,
+)
 from app.schemas.dataset import DatasetResponse, DatasetUploadResponse
 from app.schemas.profiling import DataQualityResponse, DatasetProfileResponse
 from app.services.analytics import AnalyticsService
@@ -146,68 +150,84 @@ def get_dataset_quality(
 
 @router.get(
     "/{dataset_id}/analytics",
-    response_model=BusinessAnalyticsResponse,
-    summary="Get business analytics and chart data for a dataset",
+    response_model=DatasetAnalyticsResponse,
+    summary="Get business analytics and metrics for React charts",
     responses={
-        200: {"description": "Structured business analytics suitable for React charts"},
-        400: {"description": "Dataset does not support business analytics (e.g. no numeric/revenue columns)"},
+        200: {"description": "Structured business analytics for dashboard charts and KPIs"},
+        400: {"description": "Unsupported dataset or missing required numeric column"},
         401: {"description": "Authentication required"},
         404: {"description": "Dataset not found or access denied"},
     },
 )
 def get_dataset_analytics(
     dataset_id: uuid.UUID,
+    use_cache: bool = Query(True, description="Whether to return cached analysis if available"),
     current_user: User = Depends(AuthService.get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Generate or retrieve business analytics for an uploaded dataset.
+    """Calculate or retrieve business analytics for an uploaded dataset.
 
-    Automatically detects revenue, order, customer, date, category, product, and region columns.
-    Returns:
-    - KPIs: total revenue, total orders, unique customers, average order value (AOV), growth percentage
-    - Monthly trends: revenue by month with month-over-month growth rate
-    - Categorical & Regional distributions: revenue by category and region with percentages
-    - Leaderboards: top products and top customers by sales volume
+    Calculates:
+    - Total Revenue, Total Orders, Unique Customers, Average Order Value
+    - Revenue by Month (with Month-over-Month growth rates)
+    - Revenue by Category & Revenue by Region
+    - Top Products & Top Customers
+    - Growth trends and summary
     """
     return AnalyticsService.get_or_compute_analytics(
         db=db,
         user=current_user,
         dataset_id=dataset_id,
-        custom_mapping=None,
+        mapping_override=None,
+        use_cache=use_cache,
     )
 
 
 @router.post(
     "/{dataset_id}/analytics",
-    response_model=BusinessAnalyticsResponse,
-    summary="Compute business analytics with custom column mappings",
+    response_model=DatasetAnalyticsResponse,
+    summary="Calculate business analytics with custom column mapping",
     responses={
-        200: {"description": "Structured business analytics with customized mappings"},
-        400: {"description": "Invalid column mapping or unsupported dataset"},
+        200: {"description": "Recalculated analytics based on custom column mapping"},
+        400: {"description": "Invalid column mapping or unsupported columns"},
         401: {"description": "Authentication required"},
         404: {"description": "Dataset not found or access denied"},
     },
 )
-def compute_dataset_analytics_with_mapping(
+def calculate_dataset_analytics_with_mapping(
     dataset_id: uuid.UUID,
-    mapping: Optional[ColumnMappingConfig] = None,
+    mapping_override: Optional[ColumnMappingInput] = Body(None, description="Custom column mapping overrides"),
     current_user: User = Depends(AuthService.get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Recompute business analytics with custom or partially overridden column mappings.
-
-    Accepts custom mapping for:
-    - `revenue_column`
-    - `date_column`
-    - `order_id_column`
-    - `customer_id_column`
-    - `category_column`
-    - `product_column`
-    - `region_column`
-    """
+    """Recompute business analytics for a dataset with user-configured column mapping overrides."""
     return AnalyticsService.get_or_compute_analytics(
         db=db,
         user=current_user,
         dataset_id=dataset_id,
-        custom_mapping=mapping,
+        mapping_override=mapping_override,
+        use_cache=False,
+    )
+
+
+@router.get(
+    "/{dataset_id}/analytics/mapping",
+    response_model=DetectedColumnMapping,
+    summary="Inspect and detect candidate columns for analytics",
+    responses={
+        200: {"description": "Detected column roles and available candidates"},
+        401: {"description": "Authentication required"},
+        404: {"description": "Dataset not found or access denied"},
+    },
+)
+def get_analytics_column_mapping(
+    dataset_id: uuid.UUID,
+    current_user: User = Depends(AuthService.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Inspect dataset and detect candidate columns for revenue, date, customer, product, category, etc."""
+    return AnalyticsService.get_detected_mapping(
+        db=db,
+        user=current_user,
+        dataset_id=dataset_id,
     )

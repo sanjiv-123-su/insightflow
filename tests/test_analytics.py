@@ -1,271 +1,442 @@
-from datetime import datetime
-import numpy as np
+import io
+from pathlib import Path
+import uuid
 import pandas as pd
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
-from app.schemas.analytics import ColumnMappingConfig
-from app.services.analytics import AnalyticsEngine, ColumnDetector
+from app.core.config import settings
+from app.core.database import Base, get_db
+from app.main import app
+from app.models.analytics_result import AnalyticsResult
+from app.models.dataset import Dataset
+from app.models.user import User
+from app.schemas.analytics import ColumnMappingInput, DetectedColumnMapping
+from app.services.analytics import AnalyticsEngine, AnalyticsService
+
+# Isolated in-memory SQLite database for analytics tests
+analytics_engine = create_engine(
+    "sqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+AnalyticsTestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=analytics_engine)
+
+
+def override_analytics_get_db():
+    db = AnalyticsTestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def setup_analytics_test(tmp_path, monkeypatch):
+    """Setup isolated database and temporary uploads directory for each test."""
+    Base.metadata.create_all(bind=analytics_engine)
+    monkeypatch.setattr(settings, "UPLOAD_DIR", str(tmp_path / "uploads"))
+    app.dependency_overrides[get_db] = override_analytics_get_db
+    yield
+    Base.metadata.drop_all(bind=analytics_engine)
+    app.dependency_overrides.pop(get_db, None)
+
+
+def register_and_login(email: str = "analyst@insightflow.io", password: str = "StrongPassword123!") -> dict:
+    """Helper to register and login a user, returning auth headers and user info."""
+    client.post(
+        "/auth/register",
+        json={"email": email, "password": password},
+    )
+    login_res = client.post(
+        "/auth/login",
+        json={"email": email, "password": password},
+    )
+    token = login_res.json()["access_token"]
+    return {
+        "headers": {"Authorization": f"Bearer {token}"},
+        "email": email,
+    }
+
+
+def create_business_csv() -> io.BytesIO:
+    """Generate in-memory CSV with common e-commerce business data."""
+    data = [
+        "order_id,customer_id,order_date,amount,category,region,product_name,quantity",
+        "ORD-001,CUST-A,2026-01-10,120.00,Electronics,North,Wireless Mouse,2",
+        "ORD-002,CUST-B,2026-01-15,450.00,Electronics,West,Mechanical Keyboard,1",
+        "ORD-003,CUST-A,2026-02-05,200.00,Office,North,Ergonomic Chair,1",
+        "ORD-004,CUST-C,2026-02-18,150.00,Furniture,South,Desk Lamp,3",
+        "ORD-005,CUST-B,2026-03-01,800.00,Electronics,West,4K Monitor,1",
+        "ORD-006,CUST-D,2026-03-12,300.00,Office,East,Standing Desk,1",
+    ]
+    return io.BytesIO("\n".join(data).encode("utf-8"))
 
 
 # =========================================================================
-# Unit Tests: ColumnDetector
+# Unit Tests: Column Detection
 # =========================================================================
 
-def test_detect_revenue_column_various_names():
-    """Verify revenue column is detected across various synonyms and formats."""
-    # 1. "sales"
-    df1 = pd.DataFrame({"sales": [100.5, 200.0, 300.0], "item": ["A", "B", "C"]})
-    assert ColumnDetector.detect_revenue_column(df1) == "sales"
-
-    # 2. "amount"
-    df2 = pd.DataFrame({"amount": [50, 75, 125], "customer": ["C1", "C2", "C3"]})
-    assert ColumnDetector.detect_revenue_column(df2) == "amount"
-
-    # 3. Currency strings: "$1,500.00"
-    df3 = pd.DataFrame({"total_price": ["$1,500.00", "$250.50", "$3,100.25"]})
-    assert ColumnDetector.detect_revenue_column(df3) == "total_price"
-
-    # 4. Explicit override takes precedence
-    assert ColumnDetector.detect_revenue_column(df1, explicit="sales") == "sales"
-
-
-def test_detect_date_column_various_names():
-    """Verify transaction date column is detected across common naming conventions."""
-    df1 = pd.DataFrame({
-        "order_date": ["2026-01-01", "2026-01-02", "2026-01-03"],
-        "sales": [10, 20, 30],
-    })
-    assert ColumnDetector.detect_date_column(df1) == "order_date"
-
-    df2 = pd.DataFrame({
-        "timestamp": pd.date_range("2026-01-01", periods=3),
-        "val": [1, 2, 3],
-    })
-    assert ColumnDetector.detect_date_column(df2) == "timestamp"
-
-
-def test_detect_categorical_roles():
-    """Verify order, customer, category, product, and region columns are identified."""
+def test_detect_columns_standard_names():
+    """Verify detection with standard column naming conventions."""
     df = pd.DataFrame({
-        "invoice_no": ["INV-001", "INV-002", "INV-003"],
-        "client_name": ["Acme Corp", "Beta LLC", "Gamma Inc"],
-        "dept": ["Hardware", "Software", "Hardware"],
-        "item_title": ["Laptop Pro", "Cloud License", "Docking Station"],
-        "territory": ["EMEA", "APAC", "Americas"],
-        "sales_amount": [1200.0, 500.0, 250.0],
+        "order_id": [1, 2],
+        "customer_id": ["C1", "C2"],
+        "order_date": ["2026-01-01", "2026-01-02"],
+        "sales_amount": [100.5, 200.0],
+        "product_category": ["Tech", "Home"],
+        "region": ["East", "West"],
+        "product_name": ["Widget A", "Widget B"],
+        "quantity": [2, 1],
     })
 
-    assert ColumnDetector.detect_categorical_role(df, "order_id") == "invoice_no"
-    assert ColumnDetector.detect_categorical_role(df, "customer_id") == "client_name"
-    assert ColumnDetector.detect_categorical_role(df, "category") == "dept"
-    assert ColumnDetector.detect_categorical_role(df, "product") == "item_title"
-    assert ColumnDetector.detect_categorical_role(df, "region") == "territory"
+    mapping = AnalyticsEngine.detect_columns(df)
+    assert mapping.revenue_column == "sales_amount"
+    assert mapping.order_id_column == "order_id"
+    assert mapping.customer_column == "customer_id"
+    assert mapping.date_column == "order_date"
+    assert mapping.category_column == "product_category"
+    assert mapping.region_column == "region"
+    assert mapping.product_column == "product_name"
+    assert mapping.quantity_column == "quantity"
+    assert mapping.detected_automatically is True
 
 
-def test_resolve_mapping_with_custom_overrides():
-    """Verify custom column mappings override auto-detection."""
+def test_detect_columns_alternative_names():
+    """Verify detection with alternative names like invoice, client, price, department, etc."""
     df = pd.DataFrame({
-        "col_a": [10, 20, 30],
-        "col_b": ["2026-01-01", "2026-02-01", "2026-03-01"],
-        "col_c": ["Prod1", "Prod2", "Prod3"],
+        "invoice_no": [101, 102],
+        "client_email": ["a@test.com", "b@test.com"],
+        "timestamp": ["2026-02-01", "2026-02-02"],
+        "price": [45.0, 90.0],
+        "department": ["Shoes", "Apparel"],
+        "country": ["USA", "Canada"],
+        "item_title": ["Sneakers", "Jacket"],
+        "qty": [1, 3],
     })
 
-    custom = ColumnMappingConfig(
-        revenue_column="col_a",
-        date_column="col_b",
-        product_column="col_c",
-    )
-    mapping, _ = ColumnDetector.resolve_mapping(df, custom)
-
-    assert mapping.revenue_column == "col_a"
-    assert mapping.date_column == "col_b"
-    assert mapping.product_column == "col_c"
-    assert mapping.auto_detected is False
+    mapping = AnalyticsEngine.detect_columns(df)
+    assert mapping.revenue_column == "price"
+    assert mapping.order_id_column == "invoice_no"
+    assert mapping.customer_column == "client_email"
+    assert mapping.date_column == "timestamp"
+    assert mapping.category_column == "department"
+    assert mapping.region_column == "country"
+    assert mapping.product_column == "item_title"
+    assert mapping.quantity_column == "qty"
 
 
-# =========================================================================
-# Unit Tests: AnalyticsEngine Calculations
-# =========================================================================
-
-@pytest.fixture
-def sample_business_df():
-    """Create a realistic business transaction dataset."""
-    return pd.DataFrame({
-        "order_id": ["ORD-1", "ORD-2", "ORD-3", "ORD-4", "ORD-5", "ORD-6"],
-        "order_date": [
-            "2026-01-10",
-            "2026-01-20",
-            "2026-02-05",
-            "2026-02-15",
-            "2026-03-01",
-            "2026-03-25",
-        ],
-        "customer": ["Cust_A", "Cust_B", "Cust_A", "Cust_C", "Cust_B", "Cust_A"],
-        "product": ["Widget Pro", "Gadget Max", "Widget Pro", "Super Sensor", "Gadget Max", "Widget Pro"],
-        "category": ["Electronics", "Electronics", "Electronics", "Hardware", "Electronics", "Electronics"],
-        "region": ["North", "South", "North", "East", "South", "North"],
-        "sales": [100.0, 200.0, 150.0, 300.0, 250.0, 100.0],
+def test_detect_columns_user_overrides():
+    """Verify user overrides take precedence over heuristic detection."""
+    df = pd.DataFrame({
+        "col_a": [10.0, 20.0],
+        "col_b": [100.0, 200.0],
+        "col_c": ["2026-01-01", "2026-01-02"],
     })
 
-
-def test_compute_kpis(sample_business_df):
-    """Verify calculation of high-level KPIs."""
-    df, rev_col = AnalyticsEngine.validate_and_prepare_df(
-        sample_business_df,
-        ColumnDetector.resolve_mapping(sample_business_df)[0],
+    overrides = ColumnMappingInput(
+        revenue_column="col_b",
+        date_column="col_c",
     )
-    mapping, _ = ColumnDetector.resolve_mapping(sample_business_df)
-
-    kpis = AnalyticsEngine.compute_kpis(df, mapping, monthly_growth=15.5)
-
-    assert kpis.total_revenue == 1100.0  # 100 + 200 + 150 + 300 + 250 + 100
-    assert kpis.total_orders == 6
-    assert kpis.unique_customers == 3  # Cust_A, Cust_B, Cust_C
-    assert kpis.average_order_value == round(1100.0 / 6, 2)
-    assert kpis.overall_growth_percentage == 15.5
-
-
-def test_compute_revenue_by_month_and_growth(sample_business_df):
-    """Verify monthly aggregation and month-over-month growth calculations."""
-    df, _ = AnalyticsEngine.validate_and_prepare_df(
-        sample_business_df,
-        ColumnDetector.resolve_mapping(sample_business_df)[0],
-    )
-    mapping, _ = ColumnDetector.resolve_mapping(sample_business_df)
-
-    monthly_items, latest_growth = AnalyticsEngine.compute_revenue_by_month(df, mapping)
-
-    assert len(monthly_items) == 3
-    assert [m.month for m in monthly_items] == ["2026-01", "2026-02", "2026-03"]
-
-    # Jan: 100 + 200 = 300, growth = None
-    assert monthly_items[0].revenue == 300.0
-    assert monthly_items[0].growth_percentage is None
-
-    # Feb: 150 + 300 = 450, growth = ((450 - 300) / 300) * 100 = 50.0%
-    assert monthly_items[1].revenue == 450.0
-    assert monthly_items[1].growth_percentage == 50.0
-
-    # Mar: 250 + 100 = 350, growth = ((350 - 450) / 450) * 100 = -22.22%
-    assert monthly_items[2].revenue == 350.0
-    assert monthly_items[2].growth_percentage == round(((350.0 - 450.0) / 450.0) * 100.0, 2)
-
-    assert latest_growth == monthly_items[2].growth_percentage
-
-
-def test_compute_revenue_by_category(sample_business_df):
-    """Verify category revenue distribution and percentage shares."""
-    df, _ = AnalyticsEngine.validate_and_prepare_df(
-        sample_business_df,
-        ColumnDetector.resolve_mapping(sample_business_df)[0],
-    )
-    mapping, _ = ColumnDetector.resolve_mapping(sample_business_df)
-
-    cat_items = AnalyticsEngine.compute_revenue_by_category(df, mapping, total_revenue=1100.0)
-
-    assert len(cat_items) == 2
-    # Electronics: 100+200+150+250+100 = 800 (72.73%)
-    assert cat_items[0].category == "Electronics"
-    assert cat_items[0].revenue == 800.0
-    assert cat_items[0].percentage == round((800.0 / 1100.0) * 100.0, 2)
-
-    # Hardware: 300 (27.27%)
-    assert cat_items[1].category == "Hardware"
-    assert cat_items[1].revenue == 300.0
-    assert cat_items[1].percentage == round((300.0 / 1100.0) * 100.0, 2)
-
-
-def test_compute_revenue_by_region(sample_business_df):
-    """Verify regional revenue distribution."""
-    df, _ = AnalyticsEngine.validate_and_prepare_df(
-        sample_business_df,
-        ColumnDetector.resolve_mapping(sample_business_df)[0],
-    )
-    mapping, _ = ColumnDetector.resolve_mapping(sample_business_df)
-
-    reg_items = AnalyticsEngine.compute_revenue_by_region(df, mapping, total_revenue=1100.0)
-
-    assert len(reg_items) == 3
-    # South: 200 + 250 = 450
-    # North: 100 + 150 + 100 = 350
-    # East: 300
-    regions = {r.region: r.revenue for r in reg_items}
-    assert regions["South"] == 450.0
-    assert regions["North"] == 350.0
-    assert regions["East"] == 300.0
-
-
-def test_compute_top_products_and_customers(sample_business_df):
-    """Verify product and customer leaderboards."""
-    df, _ = AnalyticsEngine.validate_and_prepare_df(
-        sample_business_df,
-        ColumnDetector.resolve_mapping(sample_business_df)[0],
-    )
-    mapping, _ = ColumnDetector.resolve_mapping(sample_business_df)
-
-    # Top products
-    top_prods = AnalyticsEngine.compute_top_products(df, mapping)
-    assert top_prods[0].product == "Gadget Max"
-    assert top_prods[0].revenue == 450.0  # 200 + 250
-    assert top_prods[1].product == "Widget Pro"
-    assert top_prods[1].revenue == 350.0  # 100 + 150 + 100
-
-    # Top customers
-    top_custs = AnalyticsEngine.compute_top_customers(df, mapping)
-    assert top_custs[0].customer == "Cust_B"
-    assert top_custs[0].revenue == 450.0  # 200 + 250
-    assert top_custs[1].customer == "Cust_A"
-    assert top_custs[1].revenue == 350.0  # 100 + 150 + 100
-
-
-def test_generate_analytics_full_pipeline(sample_business_df):
-    """Verify full end-to-end analytics generation returning React chart payloads."""
-    result = AnalyticsEngine.generate_analytics(sample_business_df)
-
-    assert result.kpis.total_revenue == 1100.0
-    assert len(result.revenue_by_month) == 3
-    assert len(result.revenue_by_category) == 2
-    assert len(result.revenue_by_region) == 3
-    assert len(result.top_products) == 3
-    assert len(result.top_customers) == 3
-    assert "revenue_by_month" in result.supported_metrics
-    assert "revenue_by_category" in result.supported_metrics
+    mapping = AnalyticsEngine.detect_columns(df, overrides=overrides)
+    assert mapping.revenue_column == "col_b"
+    assert mapping.date_column == "col_c"
+    assert mapping.detected_automatically is False
 
 
 # =========================================================================
-# Unit Tests: Error Handling & Unsupported Datasets
+# Unit Tests: Column Validation
 # =========================================================================
 
-def test_empty_dataframe_rejected():
-    """Verify empty DataFrame raises 400 error."""
-    df = pd.DataFrame()
+def test_validate_mapping_missing_revenue_column():
+    """Verify validation fails if no revenue column could be identified."""
+    df = pd.DataFrame({
+        "text_1": ["foo", "bar"],
+        "text_2": ["baz", "qux"],
+    })
+    mapping = DetectedColumnMapping(revenue_column=None)
+
     with pytest.raises(HTTPException) as exc:
-        AnalyticsEngine.generate_analytics(df)
+        AnalyticsEngine.validate_mapping(df, mapping)
     assert exc.value.status_code == 400
-    assert "empty" in exc.value.detail.lower()
+    assert "no revenue" in exc.value.detail.lower()
 
 
-def test_no_numeric_revenue_column_rejected():
-    """Verify dataset with purely text columns raises 400 error."""
-    df = pd.DataFrame({
-        "name": ["Alice", "Bob"],
-        "city": ["New York", "London"],
-        "comments": ["Good", "Great"],
-    })
+def test_validate_mapping_nonexistent_column_override():
+    """Verify validation fails if user specifies a non-existent column."""
+    df = pd.DataFrame({"sales": [10, 20]})
+    mapping = DetectedColumnMapping(revenue_column="non_existent")
+
     with pytest.raises(HTTPException) as exc:
-        AnalyticsEngine.generate_analytics(df)
+        AnalyticsEngine.validate_mapping(df, mapping)
     assert exc.value.status_code == 400
-    assert "could not detect a revenue" in exc.value.detail.lower()
+    assert "does not exist" in exc.value.detail.lower()
 
 
-def test_dataset_with_only_revenue_column_succeeds():
-    """Verify dataset with only revenue column calculates KPIs without crashing."""
-    df = pd.DataFrame({"sales": [50.0, 150.0, 200.0]})
-    result = AnalyticsEngine.generate_analytics(df)
+def test_validate_mapping_non_numeric_revenue_column():
+    """Verify validation fails if mapped revenue column is non-numeric."""
+    df = pd.DataFrame({"description": ["apple", "banana", "orange"]})
+    mapping = DetectedColumnMapping(revenue_column="description")
 
-    assert result.kpis.total_revenue == 400.0
-    assert result.kpis.total_orders == 3
-    assert result.revenue_by_month == []
-    assert result.revenue_by_category == []
-    assert result.revenue_by_region == []
+    with pytest.raises(HTTPException) as exc:
+        AnalyticsEngine.validate_mapping(df, mapping)
+    assert exc.value.status_code == 400
+    assert "no valid numeric values" in exc.value.detail.lower()
+
+
+# =========================================================================
+# Unit Tests: Analytics Calculations
+# =========================================================================
+
+def test_calculate_analytics_full_metrics():
+    """Verify complete business metrics calculations, groupings, and growth rates."""
+    df = pd.DataFrame({
+        "order_id": ["O1", "O2", "O3", "O4"],
+        "customer": ["Alice", "Bob", "Alice", "Charlie"],
+        "date": ["2026-01-10", "2026-01-20", "2026-02-15", "2026-02-25"],
+        "revenue": [100.0, 200.0, 300.0, 400.0],
+        "category": ["Electronics", "Books", "Electronics", "Books"],
+        "region": ["North", "North", "South", "South"],
+        "product": ["Phone", "Novel", "Laptop", "Textbook"],
+        "qty": [1, 2, 1, 4],
+    })
+
+    mapping = AnalyticsEngine.detect_columns(df)
+    results = AnalyticsEngine.calculate_analytics(df, mapping)
+
+    # 1. KPIs
+    kpis = results["kpis"]
+    assert kpis["total_revenue"] == 1000.0
+    assert kpis["total_orders"] == 4
+    assert kpis["unique_customers"] == 3
+    assert kpis["average_order_value"] == 250.0
+    assert kpis["growth_percentage"] == 133.33  # Jan: 300, Feb: 700 -> (700-300)/300 = 133.33%
+
+    # 2. Revenue by month
+    monthly = results["revenue_by_month"]
+    assert len(monthly) == 2
+    assert monthly[0]["period"] == "2026-01"
+    assert monthly[0]["revenue"] == 300.0
+    assert monthly[0]["orders"] == 2
+    assert monthly[0]["growth_percentage"] is None
+
+    assert monthly[1]["period"] == "2026-02"
+    assert monthly[1]["revenue"] == 700.0
+    assert monthly[1]["orders"] == 2
+    assert monthly[1]["growth_percentage"] == 133.33
+
+    # 3. Growth summary
+    growth = results["growth_summary"]
+    assert growth is not None
+    assert growth["current_period"] == "2026-02"
+    assert growth["previous_period"] == "2026-01"
+    assert growth["growth_percentage"] == 133.33
+    assert growth["trend"] == "positive"
+
+    # 4. Revenue by category
+    cats = results["revenue_by_category"]
+    assert len(cats) == 2
+    assert cats[0]["category"] == "Books"  # 200 + 400 = 600
+    assert cats[0]["revenue"] == 600.0
+    assert cats[0]["percentage"] == 60.0
+
+    assert cats[1]["category"] == "Electronics"  # 100 + 300 = 400
+    assert cats[1]["revenue"] == 400.0
+    assert cats[1]["percentage"] == 40.0
+
+    # 5. Revenue by region
+    regs = results["revenue_by_region"]
+    assert len(regs) == 2
+    assert regs[0]["region"] == "South"
+    assert regs[0]["revenue"] == 700.0
+    assert regs[0]["percentage"] == 70.0
+
+    # 6. Top products
+    prods = results["top_products"]
+    assert len(prods) == 4
+    assert prods[0]["product"] == "Textbook"
+    assert prods[0]["revenue"] == 400.0
+    assert prods[0]["units_sold"] == 4
+
+    # 7. Top customers
+    custs = results["top_customers"]
+    assert len(custs) == 3
+    # Alice and Charlie both have 400
+    assert custs[0]["revenue"] == 400.0
+
+
+def test_calculate_analytics_single_month():
+    """Verify single month data does not crash and handles growth gracefully."""
+    df = pd.DataFrame({
+        "date": ["2026-03-01", "2026-03-15"],
+        "sales": [50.0, 150.0],
+    })
+    mapping = AnalyticsEngine.detect_columns(df)
+    results = AnalyticsEngine.calculate_analytics(df, mapping)
+
+    assert results["kpis"]["total_revenue"] == 200.0
+    assert results["kpis"]["growth_percentage"] is None
+    assert results["growth_summary"] is None
+    assert len(results["revenue_by_month"]) == 1
+    assert results["revenue_by_month"][0]["growth_percentage"] is None
+
+
+# =========================================================================
+# Integration Tests: API Endpoints
+# =========================================================================
+
+def test_get_dataset_analytics_success():
+    """Verify GET /datasets/{id}/analytics auto-detects and returns full business data."""
+    auth = register_and_login("analytics_user@insightflow.io")
+    csv_file = create_business_csv()
+
+    upload_res = client.post(
+        "/datasets/upload",
+        files={"file": ("ecommerce.csv", csv_file, "text/csv")},
+        headers=auth["headers"],
+    )
+    assert upload_res.status_code == 201
+    dataset_id = upload_res.json()["id"]
+
+    res = client.get(f"/datasets/{dataset_id}/analytics", headers=auth["headers"])
+    assert res.status_code == 200
+    data = res.json()
+
+    assert data["dataset_id"] == dataset_id
+    assert "kpis" in data
+    assert data["kpis"]["total_revenue"] == 2020.0
+    assert data["kpis"]["total_orders"] == 6
+    assert data["kpis"]["unique_customers"] == 4
+    assert data["kpis"]["average_order_value"] == 336.67
+
+    assert len(data["revenue_by_month"]) == 3  # Jan, Feb, Mar
+    assert len(data["revenue_by_category"]) >= 3
+    assert len(data["revenue_by_region"]) >= 3
+    assert len(data["top_products"]) >= 4
+    assert len(data["top_customers"]) == 4
+
+    assert data["column_mapping"]["revenue_column"] == "amount"
+    assert data["column_mapping"]["date_column"] == "order_date"
+
+    # Verify cached in database
+    with AnalyticsTestingSessionLocal() as db:
+        cached = (
+            db.query(AnalyticsResult)
+            .filter(
+                AnalyticsResult.dataset_id == uuid.UUID(dataset_id),
+                AnalyticsResult.analysis_type == "business_overview",
+            )
+            .first()
+        )
+        assert cached is not None
+        assert cached.result["kpis"]["total_revenue"] == 2020.0
+
+
+def test_post_dataset_analytics_with_mapping_override():
+    """Verify POST /datasets/{id}/analytics recalculates with custom column mapping."""
+    auth = register_and_login("override_user@insightflow.io")
+    # Dataset with 2 numeric columns: price and shipping_cost
+    csv_data = (
+        "order_num,price,shipping_cost,tag\n"
+        "101,100,10,A\n"
+        "102,200,20,B\n"
+    )
+    upload_res = client.post(
+        "/datasets/upload",
+        files={"file": ("fees.csv", io.BytesIO(csv_data.encode("utf-8")), "text/csv")},
+        headers=auth["headers"],
+    )
+    dataset_id = upload_res.json()["id"]
+
+    # 1. Default should pick price (higher revenue keyword match)
+    default_res = client.get(f"/datasets/{dataset_id}/analytics", headers=auth["headers"])
+    assert default_res.status_code == 200
+    assert default_res.json()["kpis"]["total_revenue"] == 300.0
+
+    # 2. Override revenue to shipping_cost via POST
+    override_payload = {
+        "revenue_column": "shipping_cost",
+        "order_id_column": "order_num",
+        "category_column": "tag",
+    }
+    post_res = client.post(
+        f"/datasets/{dataset_id}/analytics",
+        json=override_payload,
+        headers=auth["headers"],
+    )
+    assert post_res.status_code == 200
+    overridden_data = post_res.json()
+    assert overridden_data["kpis"]["total_revenue"] == 30.0  # 10 + 20
+    assert overridden_data["column_mapping"]["revenue_column"] == "shipping_cost"
+    assert overridden_data["column_mapping"]["detected_automatically"] is False
+
+
+def test_get_dataset_analytics_mapping_preview():
+    """Verify GET /datasets/{id}/analytics/mapping returns detected candidate mapping."""
+    auth = register_and_login("mapping_preview@insightflow.io")
+    csv_file = create_business_csv()
+
+    upload_res = client.post(
+        "/datasets/upload",
+        files={"file": ("preview.csv", csv_file, "text/csv")},
+        headers=auth["headers"],
+    )
+    dataset_id = upload_res.json()["id"]
+
+    res = client.get(f"/datasets/{dataset_id}/analytics/mapping", headers=auth["headers"])
+    assert res.status_code == 200
+    data = res.json()
+
+    assert data["revenue_column"] == "amount"
+    assert data["date_column"] == "order_date"
+    assert data["order_id_column"] == "order_id"
+    assert data["customer_column"] == "customer_id"
+    assert "amount" in data["available_numeric_columns"]
+    assert "order_date" in data["available_date_columns"]
+
+
+def test_analytics_auth_and_isolation():
+    """Verify analytics endpoints require auth and protect cross-user data."""
+    user_a = register_and_login("alice_ana@insightflow.io")
+    user_b = register_and_login("bob_ana@insightflow.io")
+
+    upload_res = client.post(
+        "/datasets/upload",
+        files={"file": ("biz.csv", create_business_csv(), "text/csv")},
+        headers=user_a["headers"],
+    )
+    dataset_id = upload_res.json()["id"]
+
+    # 1. Unauthenticated -> 401
+    assert client.get(f"/datasets/{dataset_id}/analytics").status_code == 401
+    assert client.post(f"/datasets/{dataset_id}/analytics").status_code == 401
+    assert client.get(f"/datasets/{dataset_id}/analytics/mapping").status_code == 401
+
+    # 2. Other user -> 404
+    assert client.get(f"/datasets/{dataset_id}/analytics", headers=user_b["headers"]).status_code == 404
+    assert client.post(f"/datasets/{dataset_id}/analytics", json={}, headers=user_b["headers"]).status_code == 404
+    assert client.get(f"/datasets/{dataset_id}/analytics/mapping", headers=user_b["headers"]).status_code == 404
+
+
+def test_analytics_unsupported_dataset():
+    """Verify non-business dataset without numeric columns returns 400 Bad Request."""
+    auth = register_and_login("unsupported@insightflow.io")
+    text_only_csv = "first_name,last_name,city\nJohn,Doe,Seattle\nJane,Smith,Boston\n"
+
+    upload_res = client.post(
+        "/datasets/upload",
+        files={"file": ("names.csv", io.BytesIO(text_only_csv.encode("utf-8")), "text/csv")},
+        headers=auth["headers"],
+    )
+    dataset_id = upload_res.json()["id"]
+
+    res = client.get(f"/datasets/{dataset_id}/analytics", headers=auth["headers"])
+    assert res.status_code == 400
+    assert "unsupported dataset" in res.json()["detail"].lower()

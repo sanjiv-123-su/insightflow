@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import logging
+import math
 from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -14,642 +15,536 @@ from app.models.analytics_result import AnalyticsResult
 from app.models.dataset import Dataset
 from app.models.user import User
 from app.schemas.analytics import (
-    BusinessAnalyticsResponse,
-    CategoryRevenueItem,
-    ColumnMappingConfig,
+    CategoryRevenuePoint,
+    ColumnMappingInput,
+    DatasetAnalyticsResponse,
     DetectedColumnMapping,
-    KPIMetrics,
-    MonthlyRevenueItem,
-    RegionRevenueItem,
-    TopCustomerItem,
-    TopProductItem,
+    GrowthSummary,
+    KpiMetrics,
+    MonthlyRevenuePoint,
+    RegionRevenuePoint,
+    TopCustomerPoint,
+    TopProductPoint,
 )
 from app.services.file_storage import FileStorageService
 from app.services.profiler import DataProfilerService
 
 logger = logging.getLogger(__name__)
 
-# Heuristic regex patterns for common business dimensions
-PATTERNS = {
-    "revenue": re.compile(
-        r"(total[\s_]?)?(rev(enue)?|sales?|amount|price|subtotal|spend|turnover|gmv|val(ue)?|cost)",
-        re.IGNORECASE,
-    ),
-    "date": re.compile(
-        r"(order[\s_]?date|invoice[\s_]?date|sale[\s_]?date|trans(action)?[\s_]?date|date|created[\s_]?at|timestamp|period|time)",
-        re.IGNORECASE,
-    ),
-    "order_id": re.compile(
-        r"(order[\s_]?id|order[\s_]?no|order[\s_]?number|invoice[\s_]?(no|id|num)?|transaction[\s_]?id|receipt|txn[\s_]?id)",
-        re.IGNORECASE,
-    ),
-    "customer_id": re.compile(
-        r"(cust(omer)?[\s_]?(id|no|num|code|name)?|client[\s_]?(id|name)?|user[\s_]?(id|name)?|buyer|account[\s_]?id|email)",
-        re.IGNORECASE,
-    ),
-    "category": re.compile(
-        r"(cat(egory)?|department|dept|segment|type|class|group|sector|line)",
-        re.IGNORECASE,
-    ),
-    "product": re.compile(
-        r"(prod(uct)?[\s_]?(name|id|title|desc)?|item[\s_]?(name|id|title|desc)?|sku|description|title)",
-        re.IGNORECASE,
-    ),
-    "region": re.compile(
-        r"(region|territory|country|state|city|market|zone|area|location|province|continent)",
-        re.IGNORECASE,
-    ),
+# Heuristic keyword matchers for column auto-detection
+KEYWORD_CANDIDATES = {
+    "revenue": [
+        "revenue", "sales", "amount", "total_amount", "price", "total",
+        "order_total", "line_total", "net_sales", "subtotal", "cost",
+        "turnover", "gross_sales", "payment", "value", "spent", "grand_total"
+    ],
+    "order_id": [
+        "order_id", "order_number", "order_no", "invoice_id", "invoice_no",
+        "invoice", "transaction_id", "trans_id", "receipt_id", "order", "id"
+    ],
+    "customer": [
+        "customer_id", "customer_name", "customer", "client_id", "client_name",
+        "client", "user_id", "username", "buyer_id", "buyer", "account_id",
+        "account_name", "email", "customer_email"
+    ],
+    "date": [
+        "date", "order_date", "created_at", "timestamp", "invoice_date",
+        "transaction_date", "purchase_date", "sale_date", "time", "day",
+        "order_timestamp", "period"
+    ],
+    "category": [
+        "category", "product_category", "item_category", "department", "type",
+        "segment", "group", "genre", "class", "family", "product_type"
+    ],
+    "region": [
+        "region", "country", "state", "city", "territory", "zone",
+        "location", "market", "area", "province", "continent", "store_location"
+    ],
+    "product": [
+        "product", "product_name", "item", "item_name", "sku", "product_id",
+        "item_id", "description", "title", "goods", "service"
+    ],
+    "quantity": [
+        "quantity", "qty", "units", "count", "items", "volume", "number_of_items"
+    ],
 }
 
 
-class ColumnDetector:
-    """Intelligently detects business semantic roles from DataFrame columns."""
-
-    @staticmethod
-    def clean_numeric_series(series: pd.Series) -> pd.Series:
-        """Strip currency symbols, commas, and whitespace, converting to clean numeric float."""
-        if pd.api.types.is_numeric_dtype(series):
-            return pd.to_numeric(series, errors="coerce")
-        # Strip currency symbols and commas from strings
-        cleaned = (
-            series.dropna()
-            .astype(str)
-            .str.replace(r"[$€£¥₹,\s]", "", regex=True)
-            .str.strip()
-        )
-        return pd.to_numeric(cleaned, errors="coerce")
-
-    @classmethod
-    def detect_revenue_column(cls, df: pd.DataFrame, explicit: Optional[str] = None) -> Optional[str]:
-        """Detect the primary revenue or sales metric column."""
-        if explicit and explicit in df.columns:
-            cleaned = cls.clean_numeric_series(df[explicit])
-            if cleaned.notna().sum() > 0:
-                return explicit
-
-        # 1. Look for columns matching revenue regex keywords
-        candidates = []
-        for col in df.columns:
-            col_str = str(col).strip()
-            if PATTERNS["revenue"].search(col_str):
-                cleaned = cls.clean_numeric_series(df[col])
-                valid_count = cleaned.notna().sum()
-                if valid_count > 0:
-                    score = 10
-                    # Prioritize exact names like "revenue", "sales", "total_amount"
-                    lower_name = col_str.lower()
-                    if "revenue" in lower_name:
-                        score += 5
-                    elif "sales" in lower_name:
-                        score += 4
-                    elif "amount" in lower_name:
-                        score += 3
-                    elif "total" in lower_name:
-                        score += 2
-                    candidates.append((col_str, score, float(cleaned.sum(skipna=True))))
-
-        if candidates:
-            # Sort by score descending, then by sum descending
-            candidates.sort(key=lambda x: (x[1], x[2]), reverse=True)
-            return candidates[0][0]
-
-        # 2. Fallback: find any numeric column that is not an ID or index
-        fallback_candidates = []
-        for col in df.columns:
-            col_str = str(col).strip()
-            if not re.search(r"(id|code|no|num|index|year|month|day)$", col_str, re.IGNORECASE):
-                cleaned = cls.clean_numeric_series(df[col])
-                if cleaned.notna().sum() / max(len(df), 1) >= 0.5:
-                    fallback_candidates.append((col_str, float(cleaned.sum(skipna=True))))
-
-        if fallback_candidates:
-            fallback_candidates.sort(key=lambda x: x[1], reverse=True)
-            return fallback_candidates[0][0]
-
-        return None
-
-    @classmethod
-    def detect_date_column(cls, df: pd.DataFrame, explicit: Optional[str] = None) -> Optional[str]:
-        """Detect the transaction date or timestamp column."""
-        if explicit and explicit in df.columns:
-            return explicit
-
-        # 1. Match regex pattern on column name
-        for col in df.columns:
-            col_str = str(col).strip()
-            if PATTERNS["date"].search(col_str):
-                parsed = pd.to_datetime(df[col], errors="coerce", format="mixed")
-                if parsed.notna().sum() / max(len(df), 1) >= 0.5:
-                    return col_str
-
-        # 2. Check if any column is datetime dtype
-        for col in df.columns:
-            if pd.api.types.is_datetime64_any_dtype(df[col]):
-                return str(col)
-
-        # 3. Sample check for date-like strings
-        for col in df.columns:
-            if df[col].dtype == object or pd.api.types.is_string_dtype(df[col]):
-                sample = df[col].dropna().head(30)
-                if len(sample) > 0 and sample.astype(str).str.contains(r"[-/:\sT]").any():
-                    parsed = pd.to_datetime(sample, errors="coerce", format="mixed")
-                    if parsed.notna().sum() / len(sample) >= 0.8:
-                        return str(col)
-
-        return None
-
-    @classmethod
-    def detect_categorical_role(
-        cls,
-        df: pd.DataFrame,
-        role: str,
-        explicit: Optional[str] = None,
-        exclude_cols: Optional[set] = None,
-    ) -> Optional[str]:
-        """Detect categorical or entity columns (order_id, customer, category, product, region)."""
-        exclude = exclude_cols or set()
-        if explicit and explicit in df.columns:
-            return explicit
-
-        pattern = PATTERNS.get(role)
-        if not pattern:
-            return None
-
-        candidates = []
-        for col in df.columns:
-            col_str = str(col).strip()
-            if col_str in exclude:
-                continue
-
-            if pattern.search(col_str):
-                unique_cnt = df[col].nunique(dropna=True)
-                candidates.append((col_str, unique_cnt))
-
-        if candidates:
-            # For categories and regions, lower cardinality is preferred
-            if role in ("category", "region"):
-                candidates.sort(key=lambda x: x[1])
-            else:
-                # For IDs, higher cardinality is preferred
-                candidates.sort(key=lambda x: x[1], reverse=True)
-            return candidates[0][0]
-
-        return None
-
-    @classmethod
-    def resolve_mapping(
-        cls,
-        df: pd.DataFrame,
-        custom: Optional[ColumnMappingConfig] = None,
-    ) -> Tuple[DetectedColumnMapping, set]:
-        """Resolve all column mappings using user configuration and heuristics."""
-        cfg = custom or ColumnMappingConfig()
-        detected_roles = {}
-        assigned_cols = set()
-
-        # 1. Revenue
-        rev_col = cls.detect_revenue_column(df, explicit=cfg.revenue_column)
-        if rev_col:
-            detected_roles["revenue"] = rev_col
-            assigned_cols.add(rev_col)
-
-        # 2. Date
-        date_col = cls.detect_date_column(df, explicit=cfg.date_column)
-        if date_col:
-            detected_roles["date"] = date_col
-            assigned_cols.add(date_col)
-
-        # 3. Order ID
-        order_col = cls.detect_categorical_role(
-            df, "order_id", explicit=cfg.order_id_column, exclude_cols=assigned_cols
-        )
-        if order_col:
-            detected_roles["order_id"] = order_col
-            assigned_cols.add(order_col)
-
-        # 4. Customer ID
-        cust_col = cls.detect_categorical_role(
-            df, "customer_id", explicit=cfg.customer_id_column, exclude_cols=assigned_cols
-        )
-        if cust_col:
-            detected_roles["customer_id"] = cust_col
-            assigned_cols.add(cust_col)
-
-        # 5. Category
-        cat_col = cls.detect_categorical_role(
-            df, "category", explicit=cfg.category_column, exclude_cols=assigned_cols
-        )
-        if cat_col:
-            detected_roles["category"] = cat_col
-            assigned_cols.add(cat_col)
-
-        # 6. Product
-        prod_col = cls.detect_categorical_role(
-            df, "product", explicit=cfg.product_column, exclude_cols=assigned_cols
-        )
-        if prod_col:
-            detected_roles["product"] = prod_col
-            assigned_cols.add(prod_col)
-
-        # 7. Region
-        region_col = cls.detect_categorical_role(
-            df, "region", explicit=cfg.region_column, exclude_cols=assigned_cols
-        )
-        if region_col:
-            detected_roles["region"] = region_col
-            assigned_cols.add(region_col)
-
-        mapping = DetectedColumnMapping(
-            revenue_column=rev_col,
-            date_column=date_col,
-            order_id_column=order_col,
-            customer_id_column=cust_col,
-            category_column=cat_col,
-            product_column=prod_col,
-            region_column=region_col,
-            auto_detected=custom is None or all(v is None for v in cfg.model_dump().values()),
-            detected_roles=detected_roles,
-        )
-        return mapping, assigned_cols
+def normalize_col_name(name: str) -> str:
+    """Normalize a column name for comparison (lowercased, spaces/hyphens to underscores)."""
+    return re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_")
 
 
 class AnalyticsEngine:
-    """Core computational engine for common business metrics and React chart payloads."""
+    """Core computational analytics engine for business datasets."""
 
     @classmethod
-    def validate_and_prepare_df(
+    def detect_columns(
         cls,
         df: pd.DataFrame,
-        mapping: DetectedColumnMapping,
-    ) -> Tuple[pd.DataFrame, str]:
-        """Validate mapped columns and prepare numeric and date representations.
+        overrides: Optional[ColumnMappingInput] = None,
+    ) -> DetectedColumnMapping:
+        """Identify revenue, order, customer, date, category, region, and product columns."""
+        cols = list(df.columns)
+        norm_map = {normalize_col_name(c): c for c in cols}
+
+        # 1. Identify available data types
+        numeric_cols: List[str] = []
+        date_cols: List[str] = []
+        categorical_cols: List[str] = []
+
+        for c in cols:
+            series = df[c]
+            non_null = series.dropna()
+            if len(non_null) == 0:
+                continue
+
+            # Check numeric
+            if pd.api.types.is_numeric_dtype(series) and not pd.api.types.is_bool_dtype(series):
+                numeric_cols.append(c)
+            else:
+                converted = pd.to_numeric(non_null, errors="coerce")
+                if converted.notna().sum() / len(non_null) >= 0.80:
+                    numeric_cols.append(c)
+
+            # Check datetime
+            if pd.api.types.is_datetime64_any_dtype(series):
+                date_cols.append(c)
+            elif str(c).lower().find("date") != -1 or str(c).lower().find("time") != -1:
+                try:
+                    dt_sample = pd.to_datetime(non_null.head(30), errors="coerce")
+                    if dt_sample.notna().sum() / min(len(non_null), 30) >= 0.70:
+                        date_cols.append(c)
+                except Exception:
+                    pass
+
+            # Check categorical
+            if series.nunique() <= 100 and c not in numeric_cols:
+                categorical_cols.append(c)
+
+        # 2. Heuristic scoring for each role
+        detected: Dict[str, Optional[str]] = {
+            "revenue_column": None,
+            "order_id_column": None,
+            "customer_column": None,
+            "date_column": None,
+            "category_column": None,
+            "region_column": None,
+            "product_column": None,
+            "quantity_column": None,
+        }
+
+        for role, candidates in KEYWORD_CANDIDATES.items():
+            best_col = None
+            best_score = -1
+
+            for c in cols:
+                norm_c = normalize_col_name(c)
+                score = 0
+
+                # Keyword matching
+                for cand in candidates:
+                    if norm_c == cand:
+                        score = max(score, 100)
+                    elif norm_c.startswith(f"{cand}_") or norm_c.endswith(f"_{cand}"):
+                        score = max(score, 85)
+                    elif cand in norm_c:
+                        score = max(score, 65)
+
+                # Type suitability penalties/bonuses
+                if role == "revenue":
+                    if c in numeric_cols:
+                        score += 30
+                        # Penalize ID-like columns (integer IDs with high cardinality)
+                        if norm_c.endswith("_id") or norm_c == "id":
+                            score -= 80
+                    else:
+                        score = -1  # Disqualify non-numeric
+                elif role == "date":
+                    if c in date_cols:
+                        score += 40
+                    else:
+                        score -= 50
+                elif role == "quantity":
+                    if c in numeric_cols:
+                        score += 20
+                    else:
+                        score = -1
+                elif role in ("category", "region"):
+                    if c in categorical_cols:
+                        score += 20
+                    if c in numeric_cols and role != "order_id":
+                        score -= 40
+
+                if score > best_score and score > 40:
+                    best_score = score
+                    best_col = c
+
+            key = f"{role}_column" if not role.endswith("_column") else role
+            detected[key] = best_col
+
+        # Fallback for revenue if no keyword matched
+        if not detected["revenue_column"] and numeric_cols:
+            # Pick first numeric column that is not an ID
+            for nc in numeric_cols:
+                norm_nc = normalize_col_name(nc)
+                if not norm_nc.endswith("_id") and norm_nc != "id" and nc != detected["quantity_column"]:
+                    detected["revenue_column"] = nc
+                    break
+            if not detected["revenue_column"]:
+                detected["revenue_column"] = numeric_cols[0]
+
+        # 3. Apply user overrides if provided
+        auto_detected = True
+        if overrides:
+            override_dict = overrides.model_dump(exclude_unset=True)
+            for k, val in override_dict.items():
+                if val:
+                    auto_detected = False
+                    detected[k] = val
+
+        return DetectedColumnMapping(
+            revenue_column=detected["revenue_column"],
+            order_id_column=detected["order_id_column"],
+            customer_column=detected["customer_column"],
+            date_column=detected["date_column"],
+            category_column=detected["category_column"],
+            region_column=detected["region_column"],
+            product_column=detected["product_column"],
+            quantity_column=detected["quantity_column"],
+            detected_automatically=auto_detected,
+            available_numeric_columns=numeric_cols,
+            available_categorical_columns=categorical_cols,
+            available_date_columns=date_cols,
+        )
+
+    @classmethod
+    def validate_mapping(cls, df: pd.DataFrame, mapping: DetectedColumnMapping) -> None:
+        """Validate mapped columns exist and contain valid data types before analysis.
 
         Raises:
-            HTTPException(400): If dataset has no valid revenue column or required columns missing.
+            HTTPException(400): If mapping validation fails or dataset is unsupported.
         """
-        if df.empty or len(df.columns) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot perform business analytics: dataset is empty.",
-            )
+        cols = list(df.columns)
+        col_lookup = {normalize_col_name(c): c for c in cols}
 
+        # 1. Revenue column validation (Mandatory)
         rev_col = mapping.revenue_column
-        if not rev_col or rev_col not in df.columns:
+        if not rev_col:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    "Could not detect a revenue, sales, or numeric metric column in this dataset. "
-                    "Please provide explicit column mappings or upload a dataset with financial/order values."
+                    "Unsupported dataset: No revenue, sales, or numeric metric column could be identified. "
+                    "Please provide an explicit column mapping."
                 ),
             )
 
-        # Clean revenue column
-        df = df.copy()
-        df["__clean_revenue__"] = ColumnDetector.clean_numeric_series(df[rev_col])
-        if df["__clean_revenue__"].notna().sum() == 0:
+        if rev_col not in cols:
+            norm_rev = normalize_col_name(rev_col)
+            if norm_rev in col_lookup:
+                mapping.revenue_column = col_lookup[norm_rev]
+                rev_col = mapping.revenue_column
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Specified revenue column '{rev_col}' does not exist in dataset. Available columns: {cols}",
+                )
+
+        # Ensure revenue contains parseable numeric values
+        num_series = pd.to_numeric(df[rev_col], errors="coerce")
+        if num_series.notna().sum() == 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Mapped revenue column '{rev_col}' contains no valid numeric values.",
+                detail=f"Revenue column '{rev_col}' contains no valid numeric values for analysis.",
             )
 
-        # Parse date column if mapped
-        if mapping.date_column and mapping.date_column in df.columns:
-            df["__clean_date__"] = pd.to_datetime(
-                df[mapping.date_column], errors="coerce", format="mixed"
-            )
-        else:
-            df["__clean_date__"] = pd.NaT
+        # 2. Date column validation
+        if mapping.date_column:
+            d_col = mapping.date_column
+            if d_col not in cols:
+                norm_d = normalize_col_name(d_col)
+                if norm_d in col_lookup:
+                    mapping.date_column = col_lookup[norm_d]
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Specified date column '{d_col}' does not exist in dataset. Available columns: {cols}",
+                    )
+            # Verify date parseability
+            parsed_dates = pd.to_datetime(df[mapping.date_column].dropna().head(50), errors="coerce")
+            if parsed_dates.notna().sum() == 0:
+                logger.warning("Configured date column '%s' has 0 parseable dates; disabling date analysis", mapping.date_column)
+                mapping.date_column = None
 
-        return df, rev_col
+        # 3. Validate existence of other optional columns
+        for field_name in ["order_id_column", "customer_column", "category_column", "region_column", "product_column", "quantity_column"]:
+            val = getattr(mapping, field_name, None)
+            if val and val not in cols:
+                norm_v = normalize_col_name(val)
+                if norm_v in col_lookup:
+                    setattr(mapping, field_name, col_lookup[norm_v])
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Specified {field_name} '{val}' does not exist in dataset. Available columns: {cols}",
+                    )
 
     @classmethod
-    def compute_kpis(
+    def calculate_analytics(
         cls,
         df: pd.DataFrame,
         mapping: DetectedColumnMapping,
-        monthly_growth: Optional[float] = None,
-    ) -> KPIMetrics:
-        """Compute high-level summary KPIs (total revenue, total orders, customers, AOV, growth)."""
-        rev_series = df["__clean_revenue__"].dropna()
-        total_revenue = round(float(rev_series.sum()), 2)
+    ) -> Dict[str, Any]:
+        """Perform comprehensive business analytics and structure for React visualizations."""
+        cls.validate_mapping(df, mapping)
 
-        # Total orders
-        if mapping.order_id_column and mapping.order_id_column in df.columns:
-            total_orders = int(df[mapping.order_id_column].nunique(dropna=True))
+        rev_col = mapping.revenue_column
+        assert rev_col is not None
+
+        # Prepare clean numeric revenue series
+        clean_df = df.copy()
+        clean_df["_revenue"] = pd.to_numeric(clean_df[rev_col], errors="coerce").fillna(0.0)
+
+        # 1. Total Revenue
+        total_revenue = round(float(clean_df["_revenue"].sum()), 2)
+
+        # 2. Total Orders
+        order_col = mapping.order_id_column
+        if order_col and order_col in clean_df.columns:
+            total_orders = int(clean_df[order_col].dropna().nunique())
         else:
-            total_orders = int(len(df))
+            total_orders = int(len(clean_df))
+        total_orders = max(total_orders, 1) if len(clean_df) > 0 else 0
 
-        # Unique customers
-        if mapping.customer_id_column and mapping.customer_id_column in df.columns:
-            unique_customers = int(df[mapping.customer_id_column].nunique(dropna=True))
-        else:
-            unique_customers = total_orders
+        # 3. Unique Customers
+        cust_col = mapping.customer_column
+        unique_customers = None
+        if cust_col and cust_col in clean_df.columns:
+            unique_customers = int(clean_df[cust_col].dropna().nunique())
 
-        # Average Order Value (AOV)
-        if total_orders > 0:
-            aov = round(total_revenue / total_orders, 2)
-        else:
-            aov = 0.0
+        # 4. Average Order Value (AOV)
+        aov = round(total_revenue / total_orders, 2) if total_orders > 0 else 0.0
 
-        return KPIMetrics(
-            total_revenue=total_revenue,
-            total_orders=total_orders,
-            unique_customers=unique_customers,
-            average_order_value=aov,
-            overall_growth_percentage=monthly_growth,
-        )
+        # 5. Revenue by Month & Growth Percentage
+        revenue_by_month: List[Dict[str, Any]] = []
+        growth_summary: Optional[Dict[str, Any]] = None
+        overall_growth_pct: Optional[float] = None
 
-    @classmethod
-    def compute_revenue_by_month(
-        cls,
-        df: pd.DataFrame,
-        mapping: DetectedColumnMapping,
-    ) -> Tuple[List[MonthlyRevenueItem], Optional[float]]:
-        """Calculate monthly revenue trends and month-over-month growth percentages."""
-        if "__clean_date__" not in df.columns or df["__clean_date__"].isna().all():
-            return [], None
+        date_col = mapping.date_column
+        if date_col and date_col in clean_df.columns:
+            clean_df["_date"] = pd.to_datetime(clean_df[date_col], errors="coerce")
+            dated_df = clean_df.dropna(subset=["_date"]).copy()
 
-        valid_df = df.dropna(subset=["__clean_date__"]).copy()
-        if valid_df.empty:
-            return [], None
+            if len(dated_df) > 0:
+                dated_df["_period"] = dated_df["_date"].dt.strftime("%Y-%m")
+                
+                # Group by month
+                if order_col and order_col in dated_df.columns:
+                    monthly_agg = dated_df.groupby("_period").agg(
+                        revenue=("_revenue", "sum"),
+                        orders=(order_col, "nunique"),
+                    ).reset_index()
+                else:
+                    monthly_agg = dated_df.groupby("_period").agg(
+                        revenue=("_revenue", "sum"),
+                        orders=("_revenue", "count"),
+                    ).reset_index()
 
-        valid_df["__month__"] = valid_df["__clean_date__"].dt.strftime("%Y-%m")
+                monthly_agg = monthly_agg.sort_values("_period")
 
-        # Group by month
-        grouped = (
-            valid_df.groupby("__month__")
-            .agg(
-                revenue=("__clean_revenue__", "sum"),
-                orders=(
-                    mapping.order_id_column
-                    if mapping.order_id_column and mapping.order_id_column in valid_df.columns
-                    else "__clean_revenue__",
-                    "nunique"
-                    if mapping.order_id_column and mapping.order_id_column in valid_df.columns
-                    else "count",
-                ),
-            )
-            .reset_index()
-            .sort_values("__month__")
-        )
+                # Calculate Month-over-Month Growth
+                prev_rev = None
+                for _, row in monthly_agg.iterrows():
+                    period = str(row["_period"])
+                    m_rev = round(float(row["revenue"]), 2)
+                    m_orders = int(row["orders"])
 
-        monthly_items: List[MonthlyRevenueItem] = []
-        prev_rev: Optional[float] = None
-        latest_growth: Optional[float] = None
+                    growth_pct = None
+                    if prev_rev is not None and prev_rev > 0:
+                        growth_pct = round(((m_rev - prev_rev) / prev_rev) * 100.0, 2)
 
-        for _, row in grouped.iterrows():
-            month_str = str(row["__month__"])
-            curr_rev = round(float(row["revenue"]), 2)
-            orders_count = int(row["orders"])
+                    revenue_by_month.append({
+                        "period": period,
+                        "revenue": m_rev,
+                        "orders": m_orders,
+                        "growth_percentage": growth_pct,
+                    })
+                    prev_rev = m_rev
 
-            growth_pct: Optional[float] = None
-            if prev_rev is not None and prev_rev > 0:
-                growth_pct = round(((curr_rev - prev_rev) / prev_rev) * 100.0, 2)
-                latest_growth = growth_pct
+                # Overall / latest growth summary
+                if len(revenue_by_month) >= 2:
+                    latest = revenue_by_month[-1]
+                    prior = revenue_by_month[-2]
+                    l_growth = latest["growth_percentage"]
+                    if l_growth is not None:
+                        overall_growth_pct = l_growth
+                        trend = "positive" if l_growth > 0 else ("negative" if l_growth < 0 else "neutral")
+                        growth_summary = {
+                            "current_period": latest["period"],
+                            "previous_period": prior["period"],
+                            "growth_percentage": l_growth,
+                            "trend": trend,
+                        }
 
-            monthly_items.append(
-                MonthlyRevenueItem(
-                    month=month_str,
-                    revenue=curr_rev,
-                    orders=orders_count,
-                    growth_percentage=growth_pct,
-                )
-            )
-            prev_rev = curr_rev
-
-        return monthly_items, latest_growth
-
-    @classmethod
-    def compute_revenue_by_category(
-        cls,
-        df: pd.DataFrame,
-        mapping: DetectedColumnMapping,
-        total_revenue: float,
-        top_n: int = 10,
-    ) -> List[CategoryRevenueItem]:
-        """Aggregate revenue by product category with share percentage."""
+        # 6. Revenue by Category
+        revenue_by_category: List[Dict[str, Any]] = []
         cat_col = mapping.category_column
-        if not cat_col or cat_col not in df.columns:
-            return []
+        if cat_col and cat_col in clean_df.columns:
+            cat_series = clean_df[cat_col].fillna("Uncategorized").astype(str).str.strip()
+            clean_df["_cat"] = cat_series
 
-        valid_df = df.dropna(subset=[cat_col, "__clean_revenue__"])
-        if valid_df.empty:
-            return []
+            if order_col and order_col in clean_df.columns:
+                cat_agg = clean_df.groupby("_cat").agg(
+                    revenue=("_revenue", "sum"),
+                    orders=(order_col, "nunique"),
+                ).reset_index()
+            else:
+                cat_agg = clean_df.groupby("_cat").agg(
+                    revenue=("_revenue", "sum"),
+                    orders=("_revenue", "count"),
+                ).reset_index()
 
-        grouped = (
-            valid_df.groupby(cat_col)["__clean_revenue__"]
-            .sum()
-            .reset_index()
-            .sort_values("__clean_revenue__", ascending=False)
-        )
+            cat_agg = cat_agg.sort_values("revenue", ascending=False)
+            for _, r in cat_agg.head(10).iterrows():
+                c_rev = round(float(r["revenue"]), 2)
+                pct = round((c_rev / total_revenue * 100.0), 2) if total_revenue > 0 else 0.0
+                revenue_by_category.append({
+                    "category": str(r["_cat"]),
+                    "revenue": c_rev,
+                    "orders": int(r["orders"]),
+                    "percentage": pct,
+                })
 
-        items: List[CategoryRevenueItem] = []
-        for _, row in grouped.head(top_n).iterrows():
-            rev = round(float(row["__clean_revenue__"]), 2)
-            pct = round((rev / total_revenue * 100.0), 2) if total_revenue > 0 else 0.0
-            items.append(
-                CategoryRevenueItem(
-                    category=str(row[cat_col]),
-                    revenue=rev,
-                    percentage=pct,
-                )
-            )
+        # 7. Revenue by Region
+        revenue_by_region: List[Dict[str, Any]] = []
+        reg_col = mapping.region_column
+        if reg_col and reg_col in clean_df.columns:
+            reg_series = clean_df[reg_col].fillna("Unknown Region").astype(str).str.strip()
+            clean_df["_reg"] = reg_series
 
-        return items
+            if order_col and order_col in clean_df.columns:
+                reg_agg = clean_df.groupby("_reg").agg(
+                    revenue=("_revenue", "sum"),
+                    orders=(order_col, "nunique"),
+                ).reset_index()
+            else:
+                reg_agg = clean_df.groupby("_reg").agg(
+                    revenue=("_revenue", "sum"),
+                    orders=("_revenue", "count"),
+                ).reset_index()
 
-    @classmethod
-    def compute_revenue_by_region(
-        cls,
-        df: pd.DataFrame,
-        mapping: DetectedColumnMapping,
-        total_revenue: float,
-        top_n: int = 10,
-    ) -> List[RegionRevenueItem]:
-        """Aggregate revenue by geographical region with share percentage."""
-        region_col = mapping.region_column
-        if not region_col or region_col not in df.columns:
-            return []
+            reg_agg = reg_agg.sort_values("revenue", ascending=False)
+            for _, r in reg_agg.head(10).iterrows():
+                r_rev = round(float(r["revenue"]), 2)
+                pct = round((r_rev / total_revenue * 100.0), 2) if total_revenue > 0 else 0.0
+                revenue_by_region.append({
+                    "region": str(r["_reg"]),
+                    "revenue": r_rev,
+                    "orders": int(r["orders"]),
+                    "percentage": pct,
+                })
 
-        valid_df = df.dropna(subset=[region_col, "__clean_revenue__"])
-        if valid_df.empty:
-            return []
-
-        grouped = (
-            valid_df.groupby(region_col)["__clean_revenue__"]
-            .sum()
-            .reset_index()
-            .sort_values("__clean_revenue__", ascending=False)
-        )
-
-        items: List[RegionRevenueItem] = []
-        for _, row in grouped.head(top_n).iterrows():
-            rev = round(float(row["__clean_revenue__"]), 2)
-            pct = round((rev / total_revenue * 100.0), 2) if total_revenue > 0 else 0.0
-            items.append(
-                RegionRevenueItem(
-                    region=str(row[region_col]),
-                    revenue=rev,
-                    percentage=pct,
-                )
-            )
-
-        return items
-
-    @classmethod
-    def compute_top_products(
-        cls,
-        df: pd.DataFrame,
-        mapping: DetectedColumnMapping,
-        top_n: int = 10,
-    ) -> List[TopProductItem]:
-        """Identify top-performing products by sales revenue and frequency."""
+        # 8. Top Products
+        top_products: List[Dict[str, Any]] = []
         prod_col = mapping.product_column
-        if not prod_col or prod_col not in df.columns:
-            return []
+        qty_col = mapping.quantity_column
+        if prod_col and prod_col in clean_df.columns:
+            clean_df["_prod"] = clean_df[prod_col].fillna("Unknown Product").astype(str).str.strip()
 
-        valid_df = df.dropna(subset=[prod_col, "__clean_revenue__"])
-        if valid_df.empty:
-            return []
+            agg_dict: Dict[str, Any] = {
+                "revenue": ("_revenue", "sum"),
+            }
+            if order_col and order_col in clean_df.columns:
+                agg_dict["orders"] = (order_col, "nunique")
+            else:
+                agg_dict["orders"] = ("_revenue", "count")
 
-        grouped = (
-            valid_df.groupby(prod_col)
-            .agg(
-                revenue=("__clean_revenue__", "sum"),
-                orders=(
-                    mapping.order_id_column
-                    if mapping.order_id_column and mapping.order_id_column in valid_df.columns
-                    else "__clean_revenue__",
-                    "nunique"
-                    if mapping.order_id_column and mapping.order_id_column in valid_df.columns
-                    else "count",
-                ),
-            )
-            .reset_index()
-            .sort_values("revenue", ascending=False)
-        )
+            has_qty = qty_col and qty_col in clean_df.columns
+            if has_qty:
+                clean_df["_qty"] = pd.to_numeric(clean_df[qty_col], errors="coerce").fillna(0)
+                agg_dict["units_sold"] = ("_qty", "sum")
 
-        items: List[TopProductItem] = []
-        for _, row in grouped.head(top_n).iterrows():
-            items.append(
-                TopProductItem(
-                    product=str(row[prod_col]),
-                    revenue=round(float(row["revenue"]), 2),
-                    orders=int(row["orders"]),
-                )
-            )
+            prod_agg = clean_df.groupby("_prod").agg(**agg_dict).reset_index()
+            prod_agg = prod_agg.sort_values("revenue", ascending=False)
 
-        return items
+            for _, r in prod_agg.head(10).iterrows():
+                p_item: Dict[str, Any] = {
+                    "product": str(r["_prod"]),
+                    "revenue": round(float(r["revenue"]), 2),
+                    "orders": int(r["orders"]),
+                    "units_sold": int(r["units_sold"]) if has_qty else None,
+                }
+                top_products.append(p_item)
 
-    @classmethod
-    def compute_top_customers(
-        cls,
-        df: pd.DataFrame,
-        mapping: DetectedColumnMapping,
-        top_n: int = 10,
-    ) -> List[TopCustomerItem]:
-        """Identify top revenue-generating customers."""
-        cust_col = mapping.customer_id_column
-        if not cust_col or cust_col not in df.columns:
-            return []
+        # 9. Top Customers
+        top_customers: List[Dict[str, Any]] = []
+        if cust_col and cust_col in clean_df.columns:
+            clean_df["_cust"] = clean_df[cust_col].fillna("Guest").astype(str).str.strip()
 
-        valid_df = df.dropna(subset=[cust_col, "__clean_revenue__"])
-        if valid_df.empty:
-            return []
+            if order_col and order_col in clean_df.columns:
+                cust_agg = clean_df.groupby("_cust").agg(
+                    revenue=("_revenue", "sum"),
+                    orders=(order_col, "nunique"),
+                ).reset_index()
+            else:
+                cust_agg = clean_df.groupby("_cust").agg(
+                    revenue=("_revenue", "sum"),
+                    orders=("_revenue", "count"),
+                ).reset_index()
 
-        grouped = (
-            valid_df.groupby(cust_col)
-            .agg(
-                revenue=("__clean_revenue__", "sum"),
-                orders=(
-                    mapping.order_id_column
-                    if mapping.order_id_column and mapping.order_id_column in valid_df.columns
-                    else "__clean_revenue__",
-                    "nunique"
-                    if mapping.order_id_column and mapping.order_id_column in valid_df.columns
-                    else "count",
-                ),
-            )
-            .reset_index()
-            .sort_values("revenue", ascending=False)
-        )
+            cust_agg = cust_agg.sort_values("revenue", ascending=False)
+            for _, r in cust_agg.head(10).iterrows():
+                c_rev = round(float(r["revenue"]), 2)
+                c_ord = max(int(r["orders"]), 1)
+                c_avg = round(c_rev / c_ord, 2)
+                top_customers.append({
+                    "customer": str(r["_cust"]),
+                    "revenue": c_rev,
+                    "orders": c_ord,
+                    "average_spend": c_avg,
+                })
 
-        items: List[TopCustomerItem] = []
-        for _, row in grouped.head(top_n).iterrows():
-            items.append(
-                TopCustomerItem(
-                    customer=str(row[cust_col]),
-                    revenue=round(float(row["revenue"]), 2),
-                    orders=int(row["orders"]),
-                )
-            )
-
-        return items
-
-    @classmethod
-    def generate_analytics(
-        cls,
-        df: pd.DataFrame,
-        custom_mapping: Optional[ColumnMappingConfig] = None,
-        dataset_id: Optional[uuid.UUID] = None,
-    ) -> BusinessAnalyticsResponse:
-        """Run full analytics pipeline on DataFrame with resolved column mappings."""
-        # 1. Resolve column mappings
-        mapping, _ = ColumnDetector.resolve_mapping(df, custom=custom_mapping)
-
-        # 2. Validate and prepare DataFrame
-        prepared_df, rev_col = cls.validate_and_prepare_df(df, mapping)
-
-        # 3. Monthly revenue & growth
-        revenue_by_month, latest_growth = cls.compute_revenue_by_month(prepared_df, mapping)
-
-        # 4. High-level KPIs
-        kpis = cls.compute_kpis(prepared_df, mapping, monthly_growth=latest_growth)
-
-        # 5. Categorical & Regional breakdowns
-        revenue_by_cat = cls.compute_revenue_by_category(
-            prepared_df, mapping, total_revenue=kpis.total_revenue
-        )
-        revenue_by_reg = cls.compute_revenue_by_region(
-            prepared_df, mapping, total_revenue=kpis.total_revenue
-        )
-
-        # 6. Top Products & Top Customers
-        top_products = cls.compute_top_products(prepared_df, mapping)
-        top_customers = cls.compute_top_customers(prepared_df, mapping)
-
-        # List of supported metrics derived
-        supported = ["total_revenue", "total_orders", "average_order_value"]
-        if mapping.customer_id_column:
-            supported.append("unique_customers")
-        if mapping.date_column and revenue_by_month:
-            supported.append("revenue_by_month")
-            if latest_growth is not None:
-                supported.append("growth_percentage")
-        if mapping.category_column and revenue_by_cat:
-            supported.append("revenue_by_category")
-        if mapping.region_column and revenue_by_reg:
-            supported.append("revenue_by_region")
-        if mapping.product_column and top_products:
-            supported.append("top_products")
-        if mapping.customer_id_column and top_customers:
-            supported.append("top_customers")
-
-        return BusinessAnalyticsResponse(
-            dataset_id=dataset_id or uuid.uuid4(),
-            mapping=mapping,
-            kpis=kpis,
-            revenue_by_month=revenue_by_month,
-            revenue_by_category=revenue_by_cat,
-            revenue_by_region=revenue_by_reg,
-            top_products=top_products,
-            top_customers=top_customers,
-            supported_metrics=supported,
-            created_at=datetime.now(timezone.utc),
-        )
+        return {
+            "kpis": {
+                "total_revenue": total_revenue,
+                "total_orders": total_orders,
+                "unique_customers": unique_customers,
+                "average_order_value": aov,
+                "growth_percentage": overall_growth_pct,
+            },
+            "revenue_by_month": revenue_by_month,
+            "revenue_by_category": revenue_by_category,
+            "revenue_by_region": revenue_by_region,
+            "top_products": top_products,
+            "top_customers": top_customers,
+            "growth_summary": growth_summary,
+            "column_mapping": mapping.model_dump(),
+        }
 
 
 class AnalyticsService:
-    """Service handling dataset analytics orchestration, database caching, and access control."""
+    """Service handling business analytics execution, caching, and mapping retrieval."""
+
+    @classmethod
+    def get_detected_mapping(
+        cls,
+        db: Session,
+        user: User,
+        dataset_id: uuid.UUID,
+    ) -> DetectedColumnMapping:
+        """Inspect dataset and return detected column mappings without running full analysis."""
+        from app.services.dataset import DatasetService
+        dataset = DatasetService.get_dataset(db, user, dataset_id)
+
+        file_path = FileStorageService.get_stored_file_path(dataset.id)
+        if not file_path or not file_path.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Dataset source file is not available on storage.",
+            )
+
+        df = DataProfilerService.load_dataframe(file_path, dataset.file_type)
+        return AnalyticsEngine.detect_columns(df)
 
     @classmethod
     def get_or_compute_analytics(
@@ -657,88 +552,99 @@ class AnalyticsService:
         db: Session,
         user: User,
         dataset_id: uuid.UUID,
-        custom_mapping: Optional[ColumnMappingConfig] = None,
-    ) -> BusinessAnalyticsResponse:
-        """Fetch cached analytics from Neon or compute on-demand and persist.
+        mapping_override: Optional[ColumnMappingInput] = None,
+        use_cache: bool = True,
+    ) -> DatasetAnalyticsResponse:
+        """Compute business analytics, utilizing cached AnalyticsResult when appropriate.
 
         Raises:
+            HTTPException(400): If dataset lacks required numeric/business columns.
             HTTPException(404): If dataset does not exist or user lacks permission.
-            HTTPException(400): If dataset is unsupported or invalid.
         """
-        # 1. Enforce user access control
-        dataset = (
-            db.query(Dataset)
-            .filter(Dataset.id == dataset_id, Dataset.user_id == user.id)
-            .first()
-        )
-        if not dataset:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Dataset with ID '{dataset_id}' not found.",
-            )
+        from app.services.dataset import DatasetService
+        dataset = DatasetService.get_dataset(db, user, dataset_id)
 
-        # 2. Check if reusable cached result exists when no custom mapping is provided
-        is_custom = custom_mapping is not None and any(
-            v is not None for v in custom_mapping.model_dump().values()
-        )
-
-        if not is_custom:
+        # 1. Check cache if no custom overrides provided and use_cache is True
+        if use_cache and not mapping_override:
             cached_result = (
                 db.query(AnalyticsResult)
                 .filter(
                     AnalyticsResult.dataset_id == dataset.id,
-                    AnalyticsResult.analysis_type == "business_analytics",
+                    AnalyticsResult.analysis_type == "business_overview",
                 )
-                .order_by(AnalyticsResult.created_at.desc())
                 .first()
             )
-            if cached_result and cached_result.result:
-                try:
-                    return BusinessAnalyticsResponse.model_validate(cached_result.result)
-                except Exception as exc:
-                    logger.warning("Failed to deserialize cached analytics for %s: %s", dataset.id, exc)
+            if cached_result and isinstance(cached_result.result, dict):
+                res = cached_result.result
+                return DatasetAnalyticsResponse(
+                    dataset_id=dataset.id,
+                    kpis=KpiMetrics(**res["kpis"]),
+                    revenue_by_month=[MonthlyRevenuePoint(**m) for m in res.get("revenue_by_month", [])],
+                    revenue_by_category=[CategoryRevenuePoint(**c) for c in res.get("revenue_by_category", [])],
+                    revenue_by_region=[RegionRevenuePoint(**r) for r in res.get("revenue_by_region", [])],
+                    top_products=[TopProductPoint(**p) for p in res.get("top_products", [])],
+                    top_customers=[TopCustomerPoint(**u) for u in res.get("top_customers", [])],
+                    growth_summary=GrowthSummary(**res["growth_summary"]) if res.get("growth_summary") else None,
+                    column_mapping=DetectedColumnMapping(**res["column_mapping"]),
+                    created_at=cached_result.created_at,
+                )
 
-        # 3. Compute analytics on-demand from stored file
+        # 2. Load file and perform analysis
         file_path = FileStorageService.get_stored_file_path(dataset.id)
         if not file_path or not file_path.exists():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Dataset source file is not available on disk for analytics.",
+                detail="Dataset source file is not available on storage.",
             )
 
         df = DataProfilerService.load_dataframe(file_path, dataset.file_type)
-        analytics_response = AnalyticsEngine.generate_analytics(
-            df=df,
-            custom_mapping=custom_mapping,
-            dataset_id=dataset.id,
+
+        # Detect columns with optional overrides
+        mapping = AnalyticsEngine.detect_columns(df, overrides=mapping_override)
+
+        # Run analytics calculations
+        analytics_dict = AnalyticsEngine.calculate_analytics(df, mapping)
+
+        # 3. Store/update reusable analysis results in Neon PostgreSQL
+        cached_result = (
+            db.query(AnalyticsResult)
+            .filter(
+                AnalyticsResult.dataset_id == dataset.id,
+                AnalyticsResult.analysis_type == "business_overview",
+            )
+            .first()
         )
 
-        # 4. Cache / persist reusable result in Neon PostgreSQL
-        if not is_custom:
-            analytics_record = (
-                db.query(AnalyticsResult)
-                .filter(
-                    AnalyticsResult.dataset_id == dataset.id,
-                    AnalyticsResult.analysis_type == "business_analytics",
-                )
-                .first()
+        now = datetime.now(timezone.utc)
+        if cached_result:
+            cached_result.result = analytics_dict
+            cached_result.created_at = now
+        else:
+            cached_result = AnalyticsResult(
+                id=uuid.uuid4(),
+                dataset_id=dataset.id,
+                analysis_type="business_overview",
+                result=analytics_dict,
+                created_at=now,
             )
-            if not analytics_record:
-                analytics_record = AnalyticsResult(
-                    id=uuid.uuid4(),
-                    dataset_id=dataset.id,
-                    analysis_type="business_analytics",
-                    result=analytics_response.model_dump(mode="json"),
-                )
-                db.add(analytics_record)
-            else:
-                analytics_record.result = analytics_response.model_dump(mode="json")
-                analytics_record.created_at = datetime.now(timezone.utc)
+            db.add(cached_result)
 
-            try:
-                db.commit()
-            except Exception as exc:
-                db.rollback()
-                logger.warning("Failed to cache analytics result in DB: %s", exc)
+        try:
+            db.commit()
+            db.refresh(cached_result)
+        except Exception as exc:
+            db.rollback()
+            logger.warning("Could not persist cached analytics result: %s", exc)
 
-        return analytics_response
+        return DatasetAnalyticsResponse(
+            dataset_id=dataset.id,
+            kpis=KpiMetrics(**analytics_dict["kpis"]),
+            revenue_by_month=[MonthlyRevenuePoint(**m) for m in analytics_dict.get("revenue_by_month", [])],
+            revenue_by_category=[CategoryRevenuePoint(**c) for c in analytics_dict.get("revenue_by_category", [])],
+            revenue_by_region=[RegionRevenuePoint(**r) for r in analytics_dict.get("revenue_by_region", [])],
+            top_products=[TopProductPoint(**p) for p in analytics_dict.get("top_products", [])],
+            top_customers=[TopCustomerPoint(**u) for u in analytics_dict.get("top_customers", [])],
+            growth_summary=GrowthSummary(**analytics_dict["growth_summary"]) if analytics_dict.get("growth_summary") else None,
+            column_mapping=mapping,
+            created_at=cached_result.created_at,
+        )
