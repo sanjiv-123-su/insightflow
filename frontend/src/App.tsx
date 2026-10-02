@@ -11,6 +11,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { DatasetsPage } from './pages/DatasetsPage';
 import { DatasetDetailPage } from './pages/DatasetDetailPage';
 import { DatasetProfilePage } from './pages/DatasetProfilePage';
+import { SqlExplorerPage } from './pages/SqlExplorerPage';
 
 export const App: React.FC = () => {
   return (
@@ -34,6 +35,7 @@ export const App: React.FC = () => {
             <Route path="/datasets" element={<DatasetsPage />} />
             <Route path="/datasets/:id" element={<DatasetDetailPage />} />
             <Route path="/datasets/:id/profile" element={<DatasetProfilePage />} />
+            <Route path="/datasets/:id/sql" element={<SqlExplorerPage />} />
           </Route>
 
           {/* Catch-all redirect to landing */}

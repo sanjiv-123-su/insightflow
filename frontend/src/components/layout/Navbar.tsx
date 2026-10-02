@@ -8,8 +8,8 @@ import {
   User as UserIcon,
   Menu,
   X,
-  Layers,
 } from 'lucide-react';
+import { InsightFlowLogo } from '../common/InsightFlowLogo';
 
 export const Navbar: React.FC = () => {
   const { user, logout } = useAuth();
@@ -33,19 +33,10 @@ export const Navbar: React.FC = () => {
         <div className="flex items-center justify-between h-16">
           {/* Brand Logo */}
           <div className="flex items-center gap-8">
-            <Link to="/dashboard" className="flex items-center gap-2.5 group">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-brand-500/25 group-hover:scale-105 transition-transform">
-                <Layers className="w-5 h-5" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-lg font-bold tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-300 bg-clip-text text-transparent">
-                  InsightFlow
-                </span>
-                <span className="text-[10px] uppercase font-semibold tracking-wider text-brand-400 -mt-1">
-                  Analytics
-                </span>
-              </div>
+            <Link to="/dashboard" className="flex items-center group">
+              <InsightFlowLogo size={30} textClassName="text-white" />
             </Link>
+
 
             {/* Desktop Navigation Links */}
             <div className="hidden md:flex items-center gap-1.5">

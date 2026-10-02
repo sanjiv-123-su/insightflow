@@ -32,6 +32,14 @@ from app.schemas.profiling import (
     ProfileWarnings,
 )
 
+from app.schemas.sql_explorer import (
+    SavedQueryCreate,
+    SavedQueryResponse,
+    SavedQueryUpdate,
+    SqlQueryRequest,
+    SqlQueryResponse,
+)
+
 __all__ = [
     "CategoryRevenuePoint",
     "ColumnMappingInput",
@@ -53,6 +61,11 @@ __all__ = [
     "ProfileWarnings",
     "RegionRevenuePoint",
     "RootResponse",
+    "SavedQueryCreate",
+    "SavedQueryResponse",
+    "SavedQueryUpdate",
+    "SqlQueryRequest",
+    "SqlQueryResponse",
     "Token",
     "TokenPayload",
     "TopCustomerPoint",

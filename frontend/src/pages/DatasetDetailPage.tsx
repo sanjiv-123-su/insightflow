@@ -31,6 +31,7 @@ import {
   FileText,
   Save,
   RotateCcw,
+  Terminal,
 } from 'lucide-react';
 
 export const DatasetDetailPage: React.FC = () => {
@@ -184,6 +185,14 @@ export const DatasetDetailPage: React.FC = () => {
             <SlidersHorizontal className="w-3.5 h-3.5" />
             <span>{showMappingPanel ? 'Hide Mapping' : 'Configure Columns'}</span>
           </button>
+
+          <Link
+            to={`/datasets/${dataset.id}/sql`}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/30 text-brand-300 hover:text-white text-xs font-semibold transition-colors"
+          >
+            <Terminal className="w-3.5 h-3.5 text-brand-400" />
+            <span>SQL Explorer</span>
+          </Link>
 
           <Link
             to={`/datasets/${dataset.id}/profile`}

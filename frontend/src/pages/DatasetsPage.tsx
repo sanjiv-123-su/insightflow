@@ -19,6 +19,7 @@ import {
   Calendar,
   Layers,
   HardDrive,
+  Terminal,
 } from 'lucide-react';
 
 export const DatasetsPage: React.FC = () => {
@@ -221,17 +222,24 @@ export const DatasetsPage: React.FC = () => {
                 </div>
 
                 {/* Actions */}
-                <div className="grid grid-cols-2 gap-2 mt-6 pt-4 border-t border-slate-800/80">
+                <div className="grid grid-cols-3 gap-2 mt-6 pt-4 border-t border-slate-800/80">
                   <Link
                     to={`/datasets/${dataset.id}`}
-                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/20 text-brand-300 text-xs font-semibold transition-colors"
+                    className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/20 text-brand-300 text-xs font-semibold transition-colors"
                   >
                     <BarChart3 className="w-3.5 h-3.5" />
                     Analytics
                   </Link>
                   <Link
+                    to={`/datasets/${dataset.id}/sql`}
+                    className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-semibold transition-colors"
+                  >
+                    <Terminal className="w-3.5 h-3.5 text-brand-400" />
+                    SQL
+                  </Link>
+                  <Link
                     to={`/datasets/${dataset.id}/profile`}
-                    className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-semibold transition-colors"
+                    className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-semibold transition-colors"
                   >
                     <FileSearch className="w-3.5 h-3.5" />
                     Profile

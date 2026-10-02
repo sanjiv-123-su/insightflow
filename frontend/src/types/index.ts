@@ -187,3 +187,33 @@ export interface ApiErrorResponse {
   detail?: string | { msg?: string }[] | Record<string, unknown>;
   message?: string;
 }
+
+export interface SqlQueryRequest {
+  query: string;
+  limit?: number;
+}
+
+export interface SqlQueryResponse {
+  dataset_id: string;
+  table_name: string;
+  columns: string[];
+  column_types: Record<string, string>;
+  rows: Record<string, any>[];
+  row_count: number;
+  truncated: boolean;
+  execution_time_ms: number;
+}
+
+export interface SavedQuery {
+  id: string;
+  dataset_id: string;
+  user_id: string;
+  name: string;
+  query: string;
+  created_at: string;
+}
+
+export interface SavedQueryCreate {
+  name: string;
+  query: string;
+}
