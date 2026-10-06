@@ -2,6 +2,13 @@
 .env
 .env.*
 !.env.example
+!.env.docker.example
+
+# Uploaded storage files (do not commit uploaded user files)
+storage/uploads/*
+!storage/uploads/.gitkeep
+backend/storage/uploads/*
+!backend/storage/uploads/.gitkeep
 
 # Node / React
 node_modules/

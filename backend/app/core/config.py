@@ -24,6 +24,16 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
 
+    # CORS Settings
+    CORS_ORIGINS: str = (
+        "http://localhost,http://localhost:80,http://localhost:5173,http://localhost:3000,"
+        "http://127.0.0.1,http://127.0.0.1:80,http://127.0.0.1:5173,http://127.0.0.1:3000"
+    )
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
     # File Storage Settings
     MAX_UPLOAD_SIZE_BYTES: int = 50 * 1024 * 1024  # 50 MB
     UPLOAD_DIR: Optional[str] = None
@@ -39,7 +49,11 @@ class Settings(BaseSettings):
         if self.UPLOAD_DIR:
             p = Path(self.UPLOAD_DIR)
         else:
-            p = Path(__file__).resolve().parents[3] / "storage" / "uploads"
+            base_dir = Path(__file__).resolve().parent.parent.parent  # backend directory
+            if (base_dir.parent / "storage" / "uploads").exists() or base_dir.parent.name == "Insightflow":
+                p = base_dir.parent / "storage" / "uploads"
+            else:
+                p = base_dir / "storage" / "uploads"
         p.mkdir(parents=True, exist_ok=True)
         return p
 
