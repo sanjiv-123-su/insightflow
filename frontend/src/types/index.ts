@@ -217,3 +217,16 @@ export interface SavedQueryCreate {
   name: string;
   query: string;
 }
+
+export interface AiInsightsResponse {
+  dataset_id: string;
+  headline: string;
+  summary: string;
+  key_drivers: string[];
+  category_insight?: string | null;
+  regional_insight?: string | null;
+  recommendations: string[];
+  verified_facts: Record<string, any>;
+  provider: string;
+  created_at: string;
+}

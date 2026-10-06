@@ -62,12 +62,12 @@ export const KpiCard: React.FC<KpiCardProps> = ({
       />
 
       <div className="flex items-center justify-between mb-4">
-        <span className="text-xs font-semibold tracking-wider uppercase text-slate-400">
+        <span className="text-xs font-semibold tracking-wider uppercase text-slate-500">
           {title}
         </span>
         {icon && (
           <div
-            className={`w-10 h-10 rounded-xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-slate-200 shadow-sm`}
+            className="w-10 h-10 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-700 shadow-2xs"
           >
             {icon}
           </div>
@@ -75,7 +75,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
       </div>
 
       <div className="space-y-1">
-        <h3 className="text-2xl lg:text-3xl font-bold tracking-tight text-white">
+        <h3 className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900">
           {formatValue(value)}
         </h3>
 
@@ -85,10 +85,10 @@ export const KpiCard: React.FC<KpiCardProps> = ({
               <span
                 className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${
                   isPositive
-                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                     : isNegative
-                    ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
-                    : 'bg-slate-700/50 text-slate-400 border border-slate-600/40'
+                    ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                    : 'bg-slate-100 text-slate-600 border border-slate-200'
                 }`}
               >
                 {isPositive && <TrendingUp className="w-3 h-3" />}
@@ -97,7 +97,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
                 {isPositive ? `+${change.toFixed(1)}%` : `${change.toFixed(1)}%`}
               </span>
             )}
-            <span className="text-xs text-slate-400 font-medium">
+            <span className="text-xs text-slate-500 font-medium">
               {subtitle || changePeriod}
             </span>
           </div>

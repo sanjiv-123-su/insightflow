@@ -104,29 +104,29 @@ export const DatasetUploadModal: React.FC<DatasetUploadModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="glass-panel w-full max-w-lg rounded-2xl p-6 shadow-2xl relative border border-slate-700/60">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-200">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-6 sm:p-7 shadow-xl relative border border-slate-200">
         <button
           onClick={onClose}
           disabled={isUploading}
-          className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+          className="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
         >
           <X className="w-5 h-5" />
         </button>
 
         <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-brand-500/15 border border-brand-500/25 flex items-center justify-center text-brand-400">
+          <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200/80 flex items-center justify-center text-blue-600 shadow-2xs">
             <UploadCloud className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-white">Upload New Dataset</h3>
-            <p className="text-xs text-slate-400">Supported formats: CSV or XLSX up to 50MB</p>
+            <h3 className="text-lg font-bold text-slate-900">Upload New Dataset</h3>
+            <p className="text-xs text-slate-500">Supported formats: CSV or XLSX up to 50MB</p>
           </div>
         </div>
 
         {error && (
-          <div className="mb-4 p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 text-rose-200 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+          <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
             <span>{error}</span>
           </div>
         )}
@@ -141,10 +141,10 @@ export const DatasetUploadModal: React.FC<DatasetUploadModalProps> = ({
             onClick={() => fileInputRef.current?.click()}
             className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
               dragActive
-                ? 'border-brand-500 bg-brand-500/10'
+                ? 'border-blue-600 bg-blue-50/50'
                 : file
-                ? 'border-emerald-500/40 bg-emerald-500/5'
-                : 'border-slate-700 hover:border-slate-500 bg-slate-900/40 hover:bg-slate-900/70'
+                ? 'border-emerald-300 bg-emerald-50/30'
+                : 'border-slate-300 hover:border-slate-400 bg-slate-50/70 hover:bg-slate-50'
             }`}
           >
             <input
@@ -157,37 +157,37 @@ export const DatasetUploadModal: React.FC<DatasetUploadModalProps> = ({
 
             {file ? (
               <div className="flex flex-col items-center">
-                <div className="w-12 h-12 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center mb-2">
+                <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center mb-2">
                   {file.name.endsWith('.csv') ? (
                     <FileText className="w-6 h-6" />
                   ) : (
                     <FileSpreadsheet className="w-6 h-6" />
                   )}
                 </div>
-                <p className="text-sm font-semibold text-slate-200 truncate max-w-xs">{file.name}</p>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-sm font-semibold text-slate-900 truncate max-w-xs">{file.name}</p>
+                <p className="text-xs text-slate-500 mt-0.5">
                   {(file.size / (1024 * 1024)).toFixed(2)} MB &bull; Ready to upload
                 </p>
-                <span className="text-[11px] text-brand-400 mt-2 hover:underline">
+                <span className="text-[11px] text-blue-600 mt-2 font-medium hover:underline">
                   Click or drop to replace
                 </span>
               </div>
             ) : (
               <div className="flex flex-col items-center">
-                <div className="w-12 h-12 rounded-xl bg-slate-800/80 text-slate-400 flex items-center justify-center mb-2">
-                  <UploadCloud className="w-6 h-6" />
+                <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-500 flex items-center justify-center mb-2">
+                  <UploadCloud className="w-6 h-6 text-blue-600" />
                 </div>
-                <p className="text-sm font-medium text-slate-300">
+                <p className="text-sm font-medium text-slate-700">
                   Drag and drop your file here, or{' '}
-                  <span className="text-brand-400 font-semibold">browse</span>
+                  <span className="text-blue-600 font-semibold">browse</span>
                 </p>
-                <p className="text-xs text-slate-400 mt-1">Accepts .csv and .xlsx files</p>
+                <p className="text-xs text-slate-500 mt-1">Accepts .csv and .xlsx files</p>
               </div>
             )}
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1.5">
               Dataset Name (Optional)
             </label>
             <input
@@ -195,7 +195,7 @@ export const DatasetUploadModal: React.FC<DatasetUploadModalProps> = ({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Q3 Sales & Orders"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-slate-700 text-white text-sm focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 placeholder:text-slate-400"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-900 text-sm focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 placeholder:text-slate-400 shadow-2xs"
             />
           </div>
 
@@ -204,14 +204,14 @@ export const DatasetUploadModal: React.FC<DatasetUploadModalProps> = ({
               type="button"
               onClick={onClose}
               disabled={isUploading}
-              className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!file || isUploading}
-              className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-medium text-xs transition-all shadow-lg shadow-brand-500/25 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition-all shadow-xs hover:shadow disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {isUploading ? (
                 <>

@@ -35,28 +35,30 @@ const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload, label })
   if (active && payload && payload.length) {
     const point = payload[0].payload as MonthlyRevenuePoint;
     return (
-      <div className="rounded-xl border border-slate-700 bg-slate-900/95 p-3 shadow-xl backdrop-blur-md text-xs">
-        <p className="font-semibold text-slate-200 mb-1.5">{label}</p>
+      <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-lg text-xs">
+        <p className="font-bold text-slate-900 mb-1.5">{label}</p>
         <div className="space-y-1">
-          <p className="text-brand-400 flex items-center justify-between gap-4">
+          <p className="flex items-center justify-between gap-4 text-slate-600">
             <span>Revenue:</span>
-            <span className="font-bold text-white">
+            <span className="font-bold text-blue-600 font-mono">
               {new Intl.NumberFormat('en-US', {
                 style: 'currency',
                 currency: 'USD',
               }).format(point.revenue)}
             </span>
           </p>
-          <p className="text-slate-400 flex items-center justify-between gap-4">
+          <p className="flex items-center justify-between gap-4 text-slate-500">
             <span>Orders:</span>
-            <span className="font-medium text-slate-200">{point.orders}</span>
+            <span className="font-medium text-slate-800 font-mono">{point.orders}</span>
           </p>
           {point.growth_percentage !== null && point.growth_percentage !== undefined && (
-            <p className="text-slate-400 flex items-center justify-between gap-4">
+            <p className="flex items-center justify-between gap-4 text-slate-500 pt-0.5">
               <span>Growth:</span>
               <span
-                className={`font-semibold ${
-                  point.growth_percentage >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                className={`font-semibold font-mono text-[11px] px-1.5 py-0.2 rounded border ${
+                  point.growth_percentage >= 0
+                    ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                    : 'text-rose-700 bg-rose-50 border-rose-200'
                 }`}
               >
                 {point.growth_percentage >= 0 ? '+' : ''}
@@ -80,11 +82,11 @@ export const RevenueTrendChart: React.FC<RevenueTrendChartProps> = ({
   if (!data || data.length === 0) {
     return (
       <div className="glass-panel rounded-2xl p-6 flex flex-col justify-center items-center text-center h-[360px]">
-        <div className="w-12 h-12 rounded-xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-slate-400 mb-3">
+        <div className="w-12 h-12 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-400 mb-3">
           <TrendingUp className="w-6 h-6" />
         </div>
-        <h4 className="text-base font-semibold text-slate-200">{title}</h4>
-        <p className="text-xs text-slate-400 mt-1 max-w-xs">
+        <h4 className="text-base font-semibold text-slate-900">{title}</h4>
+        <p className="text-xs text-slate-500 mt-1 max-w-xs">
           No time-series date column found or date data is empty in this dataset.
         </p>
       </div>
@@ -95,12 +97,12 @@ export const RevenueTrendChart: React.FC<RevenueTrendChartProps> = ({
     <div className="glass-panel rounded-2xl p-6 flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h4 className="text-base font-semibold text-slate-100">{title}</h4>
-          <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>
+          <h4 className="text-base font-bold text-slate-900">{title}</h4>
+          <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 text-xs text-slate-400 font-medium bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700/50">
-            <span className="w-2 h-2 rounded-full bg-brand-500"></span>
+          <span className="inline-flex items-center gap-1.5 text-xs text-slate-600 font-medium bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200">
+            <span className="w-2 h-2 rounded-full bg-blue-600"></span>
             Monthly Revenue
           </span>
         </div>
@@ -111,20 +113,20 @@ export const RevenueTrendChart: React.FC<RevenueTrendChartProps> = ({
           <AreaChart data={data} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
             <defs>
               <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4} />
-                <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.0} />
+                <stop offset="5%" stopColor="#2563EB" stopOpacity={0.25} />
+                <stop offset="95%" stopColor="#2563EB" stopOpacity={0.0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.4} vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" opacity={0.8} vertical={false} />
             <XAxis
               dataKey="period"
-              stroke="#64748b"
+              stroke="#94A3B8"
               fontSize={11}
               tickLine={false}
-              axisLine={{ stroke: '#334155' }}
+              axisLine={{ stroke: '#E2E8F0' }}
             />
             <YAxis
-              stroke="#64748b"
+              stroke="#94A3B8"
               fontSize={11}
               tickLine={false}
               axisLine={false}
@@ -134,7 +136,7 @@ export const RevenueTrendChart: React.FC<RevenueTrendChartProps> = ({
             <Area
               type="monotone"
               dataKey="revenue"
-              stroke="#8b5cf6"
+              stroke="#2563EB"
               strokeWidth={2.5}
               fillOpacity={1}
               fill="url(#revenueGradient)"

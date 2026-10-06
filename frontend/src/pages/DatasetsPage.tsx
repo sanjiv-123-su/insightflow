@@ -80,19 +80,19 @@ export const DatasetsPage: React.FC = () => {
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
       {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-slate-800/80">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200/80">
         <div>
-          <h1 className="text-2xl lg:text-3xl font-bold tracking-tight text-white">
+          <h1 className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900">
             Datasets
           </h1>
-          <p className="text-xs sm:text-sm text-slate-400 mt-1">
+          <p className="text-xs sm:text-sm text-slate-600 mt-1">
             Manage your uploaded CSV and XLSX data files and inspect automated profiles
           </p>
         </div>
 
         <button
           onClick={() => setIsUploadOpen(true)}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-medium text-xs sm:text-sm transition-all shadow-lg shadow-brand-500/25 cursor-pointer self-start sm:self-auto"
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs sm:text-sm transition-colors shadow-xs hover:shadow cursor-pointer self-start sm:self-auto"
         >
           <Plus className="w-4 h-4" />
           <span>Upload Dataset</span>
@@ -117,13 +117,13 @@ export const DatasetsPage: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search datasets..."
-              className="w-full pl-10 pr-4 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white text-xs sm:text-sm focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 placeholder:text-slate-400"
+              className="w-full pl-10 pr-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-900 text-xs sm:text-sm focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 placeholder:text-slate-400 shadow-2xs"
             />
           </div>
 
-          <div className="text-xs text-slate-400 font-medium self-end sm:self-auto">
-            Showing <span className="font-semibold text-white">{filteredDatasets.length}</span> of{' '}
-            <span className="font-semibold text-white">{datasets.length}</span> datasets
+          <div className="text-xs text-slate-500 font-medium self-end sm:self-auto">
+            Showing <span className="font-semibold text-slate-800">{filteredDatasets.length}</span> of{' '}
+            <span className="font-semibold text-slate-800">{datasets.length}</span> datasets
           </div>
         </div>
       )}
@@ -131,7 +131,7 @@ export const DatasetsPage: React.FC = () => {
       {/* Datasets Grid */}
       {datasets.length === 0 ? (
         <EmptyState
-          icon={<Database className="w-8 h-8 text-brand-400" />}
+          icon={<Database className="w-8 h-8 text-blue-600" />}
           title="No Datasets Uploaded"
           description="Upload your first CSV or XLSX file to begin automated data profiling and analytics generation."
           actionText="Upload Dataset"
@@ -139,10 +139,10 @@ export const DatasetsPage: React.FC = () => {
         />
       ) : filteredDatasets.length === 0 ? (
         <div className="glass-panel rounded-2xl p-10 text-center">
-          <p className="text-slate-400 text-sm">No datasets matched your search query "{searchQuery}".</p>
+          <p className="text-slate-500 text-sm">No datasets matched your search query "{searchQuery}".</p>
           <button
             onClick={() => setSearchQuery('')}
-            className="mt-3 text-xs text-brand-400 hover:text-brand-300 font-medium"
+            className="mt-3 text-xs text-blue-600 hover:text-blue-700 font-medium cursor-pointer"
           >
             Clear Search
           </button>
@@ -154,7 +154,7 @@ export const DatasetsPage: React.FC = () => {
             return (
               <div
                 key={dataset.id}
-                className="glass-panel glass-panel-hover rounded-2xl p-6 flex flex-col justify-between border border-slate-800 hover:border-slate-700"
+                className="glass-panel glass-panel-hover rounded-2xl p-6 flex flex-col justify-between border border-slate-200 hover:border-slate-300 shadow-2xs hover:shadow-xs transition-all"
               >
                 <div>
                   {/* Card Header: Icon + Type Badge + Status */}
@@ -162,24 +162,24 @@ export const DatasetsPage: React.FC = () => {
                     <div
                       className={`w-11 h-11 rounded-xl flex items-center justify-center ${
                         isCsv
-                          ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                          : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          ? 'bg-blue-50 text-blue-600 border border-blue-200/80'
+                          : 'bg-emerald-50 text-emerald-600 border border-emerald-200/80'
                       }`}
                     >
                       {isCsv ? <FileText className="w-5 h-5" /> : <FileSpreadsheet className="w-5 h-5" />}
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span className="uppercase text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
+                      <span className="uppercase text-[10px] font-bold tracking-wider px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200">
                         {dataset.file_type}
                       </span>
                       <span
                         className={`text-[10px] font-semibold px-2 py-0.5 rounded-md capitalize ${
                           dataset.status === 'processed' || dataset.status === 'ready'
-                            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                             : dataset.status === 'processing'
-                            ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                            : 'bg-slate-800 text-slate-400'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                            : 'bg-slate-100 text-slate-600'
                         }`}
                       >
                         {dataset.status}
@@ -188,19 +188,19 @@ export const DatasetsPage: React.FC = () => {
                   </div>
 
                   {/* Title & Filename */}
-                  <h3 className="text-base font-bold text-white truncate" title={dataset.name}>
+                  <h3 className="text-base font-bold text-slate-900 truncate" title={dataset.name}>
                     {dataset.name}
                   </h3>
-                  <p className="text-xs text-slate-400 truncate mt-0.5" title={dataset.original_filename}>
+                  <p className="text-xs text-slate-500 truncate mt-0.5" title={dataset.original_filename}>
                     {dataset.original_filename}
                   </p>
 
                   {/* Metadata Stats */}
-                  <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-slate-800/80 text-xs">
-                    <div className="flex items-center gap-1.5 text-slate-400">
+                  <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-slate-100 text-xs">
+                    <div className="flex items-center gap-1.5 text-slate-500">
                       <Layers className="w-3.5 h-3.5 text-slate-400" />
                       <span>
-                        <strong className="text-slate-200">
+                        <strong className="text-slate-800">
                           {dataset.row_count !== null && dataset.row_count !== undefined
                             ? dataset.row_count.toLocaleString()
                             : '—'}
@@ -208,13 +208,13 @@ export const DatasetsPage: React.FC = () => {
                         rows
                       </span>
                     </div>
-                    <div className="flex items-center gap-1.5 text-slate-400">
+                    <div className="flex items-center gap-1.5 text-slate-500">
                       <HardDrive className="w-3.5 h-3.5 text-slate-400" />
-                      <span className="text-slate-200 font-medium">
+                      <span className="text-slate-800 font-medium">
                         {formatFileSize(dataset.file_size)}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1.5 text-slate-400 col-span-2">
+                    <div className="flex items-center gap-1.5 text-slate-500 col-span-2">
                       <Calendar className="w-3.5 h-3.5 text-slate-400" />
                       <span>Uploaded {formatDate(dataset.created_at)}</span>
                     </div>
@@ -222,26 +222,26 @@ export const DatasetsPage: React.FC = () => {
                 </div>
 
                 {/* Actions */}
-                <div className="grid grid-cols-3 gap-2 mt-6 pt-4 border-t border-slate-800/80">
+                <div className="grid grid-cols-3 gap-2 mt-6 pt-4 border-t border-slate-100">
                   <Link
                     to={`/datasets/${dataset.id}`}
-                    className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/20 text-brand-300 text-xs font-semibold transition-colors"
+                    className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100/80 border border-blue-200/80 text-blue-700 text-xs font-semibold shadow-2xs transition-colors"
                   >
                     <BarChart3 className="w-3.5 h-3.5" />
                     Analytics
                   </Link>
                   <Link
                     to={`/datasets/${dataset.id}/sql`}
-                    className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-semibold transition-colors"
+                    className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 hover:text-slate-900 text-xs font-semibold shadow-2xs transition-colors"
                   >
-                    <Terminal className="w-3.5 h-3.5 text-brand-400" />
+                    <Terminal className="w-3.5 h-3.5 text-slate-500" />
                     SQL
                   </Link>
                   <Link
                     to={`/datasets/${dataset.id}/profile`}
-                    className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-semibold transition-colors"
+                    className="inline-flex items-center justify-center gap-1 px-2.5 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 hover:text-slate-900 text-xs font-semibold shadow-2xs transition-colors"
                   >
-                    <FileSearch className="w-3.5 h-3.5" />
+                    <FileSearch className="w-3.5 h-3.5 text-slate-500" />
                     Profile
                   </Link>
                 </div>

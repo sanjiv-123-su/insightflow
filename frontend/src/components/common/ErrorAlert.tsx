@@ -16,19 +16,19 @@ export const ErrorAlert: React.FC<ErrorAlertProps> = ({
 }) => {
   return (
     <div
-      className={`rounded-xl border border-rose-500/20 bg-rose-950/20 p-4 text-rose-200 backdrop-blur-md ${className}`}
+      className={`rounded-xl border border-rose-200 bg-rose-50/80 p-4 text-rose-800 shadow-sm ${className}`}
       role="alert"
     >
       <div className="flex items-start gap-3">
-        <AlertCircle className="w-5 h-5 text-rose-400 mt-0.5 shrink-0" />
+        <AlertCircle className="w-5 h-5 text-rose-600 mt-0.5 shrink-0" />
         <div className="flex-1">
-          <h4 className="text-sm font-semibold text-rose-300">{title}</h4>
-          <p className="mt-1 text-sm text-rose-300/80 leading-relaxed">{message}</p>
+          <h4 className="text-sm font-semibold text-rose-900">{title}</h4>
+          <p className="mt-1 text-sm text-rose-700 leading-relaxed">{message}</p>
         </div>
         {onRetry && (
           <button
             onClick={onRetry}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-xs font-medium transition-colors cursor-pointer shrink-0"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 text-xs font-medium transition-colors cursor-pointer shrink-0"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             Retry

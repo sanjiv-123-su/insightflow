@@ -2,15 +2,18 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { datasetService } from '../services/datasetService';
 import { analyticsService } from '../services/analyticsService';
+import { aiInsightsService } from '../services/aiInsightsService';
 import { getErrorMessage } from '../services/api';
 import type {
   Dataset,
   DatasetAnalyticsResponse,
   DetectedColumnMapping,
   ColumnMappingInput,
+  AiInsightsResponse,
 } from '../types';
 
 import { KpiCard } from '../components/cards/KpiCard';
+import { AiInsightsCard } from '../components/insights/AiInsightsCard';
 import { RevenueTrendChart } from '../components/charts/RevenueTrendChart';
 import { CategoryDonutChart } from '../components/charts/CategoryDonutChart';
 import { RegionBarChart } from '../components/charts/RegionBarChart';
@@ -50,6 +53,11 @@ export const DatasetDetailPage: React.FC = () => {
   // Form state for column mapping
   const [mappingForm, setMappingForm] = useState<ColumnMappingInput>({});
 
+  // AI Insights state (generated only after normal analytics is ready)
+  const [aiInsights, setAiInsights] = useState<AiInsightsResponse | null>(null);
+  const [loadingInsights, setLoadingInsights] = useState(false);
+  const [isRegeneratingInsights, setIsRegeneratingInsights] = useState(false);
+
   const loadData = useCallback(async () => {
     if (!id) return;
     setLoading(true);
@@ -72,6 +80,16 @@ export const DatasetDetailPage: React.FC = () => {
         region_column: map.region_column || '',
         product_column: map.product_column || '',
       });
+
+      // Load AI Insights only after normal analytics is ready
+      if (an && an.kpis && an.kpis.total_revenue > 0) {
+        setLoadingInsights(true);
+        aiInsightsService
+          .getAiInsights(id)
+          .then((res) => setAiInsights(res))
+          .catch((err) => console.log('AI Insights loading info:', err))
+          .finally(() => setLoadingInsights(false));
+      }
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -82,6 +100,19 @@ export const DatasetDetailPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const handleRegenerateInsights = async () => {
+    if (!id) return;
+    setIsRegeneratingInsights(true);
+    try {
+      const fresh = await aiInsightsService.regenerateAiInsights(id);
+      setAiInsights(fresh);
+    } catch (err) {
+      console.error('Failed to regenerate AI insights:', err);
+    } finally {
+      setIsRegeneratingInsights(false);
+    }
+  };
 
   const handleUpdateMapping = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,6 +136,16 @@ export const DatasetDetailPage: React.FC = () => {
       setMapping(updatedMapping);
       setMappingSuccess(true);
       setTimeout(() => setMappingSuccess(false), 3000);
+
+      // Re-run AI insights against updated analytics
+      if (updated && updated.kpis && updated.kpis.total_revenue > 0) {
+        setLoadingInsights(true);
+        aiInsightsService
+          .regenerateAiInsights(id)
+          .then((res) => setAiInsights(res))
+          .catch((err) => console.log('AI insights update info:', err))
+          .finally(() => setLoadingInsights(false));
+      }
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -121,7 +162,7 @@ export const DatasetDetailPage: React.FC = () => {
       <div className="space-y-4">
         <Link
           to="/datasets"
-          className="inline-flex items-center gap-1.5 text-xs text-brand-400 hover:text-brand-300 font-medium"
+          className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium"
         >
           <ArrowLeft className="w-4 h-4" /> Back to Datasets
         </Link>
@@ -144,18 +185,18 @@ export const DatasetDetailPage: React.FC = () => {
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
       {/* Breadcrumb Navigation */}
-      <div className="flex items-center gap-2 text-xs text-slate-400">
-        <Link to="/datasets" className="hover:text-slate-200 transition-colors">
+      <div className="flex items-center gap-2 text-xs text-slate-500">
+        <Link to="/datasets" className="hover:text-slate-900 transition-colors">
           Datasets
         </Link>
         <span>/</span>
-        <span className="text-slate-200 font-medium">{dataset.name}</span>
+        <span className="text-slate-900 font-medium">{dataset.name}</span>
       </div>
 
       {/* Header Bar */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-4 border-b border-slate-800">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-4 border-b border-slate-200">
         <div className="flex items-start gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-brand-500/10 border border-brand-500/20 text-brand-400 flex items-center justify-center shrink-0">
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-100 text-blue-600 flex items-center justify-center shrink-0">
             {dataset.file_type === 'csv' ? (
               <FileText className="w-6 h-6" />
             ) : (
@@ -163,10 +204,10 @@ export const DatasetDetailPage: React.FC = () => {
             )}
           </div>
           <div>
-            <h1 className="text-2xl lg:text-3xl font-bold tracking-tight text-white">
+            <h1 className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900">
               {dataset.name}
             </h1>
-            <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
+            <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
               {dataset.original_filename} &bull; {dataset.row_count?.toLocaleString()} rows &bull;{' '}
               {dataset.column_count} columns &bull; {(dataset.file_size / (1024 * 1024)).toFixed(2)} MB
             </p>
@@ -178,8 +219,8 @@ export const DatasetDetailPage: React.FC = () => {
             onClick={() => setShowMappingPanel(!showMappingPanel)}
             className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
               showMappingPanel
-                ? 'bg-brand-500/20 border-brand-500/40 text-brand-300'
-                : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
+                ? 'bg-blue-50 border-blue-200 text-blue-700'
+                : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700 hover:text-slate-900 shadow-sm'
             }`}
           >
             <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -188,15 +229,15 @@ export const DatasetDetailPage: React.FC = () => {
 
           <Link
             to={`/datasets/${dataset.id}/sql`}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/30 text-brand-300 hover:text-white text-xs font-semibold transition-colors"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-semibold transition-colors"
           >
-            <Terminal className="w-3.5 h-3.5 text-brand-400" />
+            <Terminal className="w-3.5 h-3.5 text-blue-600" />
             <span>SQL Explorer</span>
           </Link>
 
           <Link
             to={`/datasets/${dataset.id}/profile`}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition-colors"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 hover:text-slate-900 text-xs font-semibold transition-colors shadow-sm"
           >
             <FileSearch className="w-3.5 h-3.5" />
             <span>Data Profile &amp; Quality</span>
@@ -208,19 +249,19 @@ export const DatasetDetailPage: React.FC = () => {
 
       {/* Column Mapping Configuration Panel */}
       {showMappingPanel && (
-        <div className="glass-panel rounded-2xl p-6 border border-brand-500/30 shadow-xl space-y-4 animate-in fade-in duration-200">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div className="glass-panel rounded-2xl p-6 border border-slate-200 shadow-sm space-y-4 animate-in fade-in duration-200">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-200">
             <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <SlidersHorizontal className="w-4 h-4 text-brand-400" />
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <SlidersHorizontal className="w-4 h-4 text-blue-600" />
                 Column Mapping Configuration
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-500 mt-0.5">
                 Override auto-detected columns to fine-tune KPI, regional, and category calculations
               </p>
             </div>
             {mappingSuccess && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-medium border border-emerald-500/30">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-xs font-medium border border-emerald-200">
                 <CheckCircle className="w-3.5 h-3.5" /> Saved &amp; Recomputed
               </span>
             )}
@@ -230,7 +271,7 @@ export const DatasetDetailPage: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
               {/* Revenue */}
               <div>
-                <label className="block font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                <label className="block font-semibold uppercase tracking-wider text-slate-600 mb-1">
                   Revenue / Sales Column
                 </label>
                 <select
@@ -238,7 +279,7 @@ export const DatasetDetailPage: React.FC = () => {
                   onChange={(e) =>
                     setMappingForm({ ...mappingForm, revenue_column: e.target.value })
                   }
-                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-200 focus:outline-none focus:border-brand-500 font-mono"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 font-mono"
                 >
                   <option value="">(Auto-detect)</option>
                   {allColumns.map((col) => (
@@ -251,7 +292,7 @@ export const DatasetDetailPage: React.FC = () => {
 
               {/* Order ID */}
               <div>
-                <label className="block font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                <label className="block font-semibold uppercase tracking-wider text-slate-600 mb-1">
                   Order / Transaction ID
                 </label>
                 <select
@@ -259,7 +300,7 @@ export const DatasetDetailPage: React.FC = () => {
                   onChange={(e) =>
                     setMappingForm({ ...mappingForm, order_id_column: e.target.value })
                   }
-                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-200 focus:outline-none focus:border-brand-500 font-mono"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 font-mono"
                 >
                   <option value="">(Auto-detect)</option>
                   {allColumns.map((col) => (
@@ -272,7 +313,7 @@ export const DatasetDetailPage: React.FC = () => {
 
               {/* Customer */}
               <div>
-                <label className="block font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                <label className="block font-semibold uppercase tracking-wider text-slate-600 mb-1">
                   Customer Column
                 </label>
                 <select
@@ -280,7 +321,7 @@ export const DatasetDetailPage: React.FC = () => {
                   onChange={(e) =>
                     setMappingForm({ ...mappingForm, customer_column: e.target.value })
                   }
-                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-200 focus:outline-none focus:border-brand-500 font-mono"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 font-mono"
                 >
                   <option value="">(Auto-detect)</option>
                   {allColumns.map((col) => (
@@ -293,7 +334,7 @@ export const DatasetDetailPage: React.FC = () => {
 
               {/* Date */}
               <div>
-                <label className="block font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                <label className="block font-semibold uppercase tracking-wider text-slate-600 mb-1">
                   Date Column
                 </label>
                 <select
@@ -301,7 +342,7 @@ export const DatasetDetailPage: React.FC = () => {
                   onChange={(e) =>
                     setMappingForm({ ...mappingForm, date_column: e.target.value })
                   }
-                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-200 focus:outline-none focus:border-brand-500 font-mono"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 font-mono"
                 >
                   <option value="">(Auto-detect)</option>
                   {allColumns.map((col) => (
@@ -314,7 +355,7 @@ export const DatasetDetailPage: React.FC = () => {
 
               {/* Category */}
               <div>
-                <label className="block font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                <label className="block font-semibold uppercase tracking-wider text-slate-600 mb-1">
                   Category Column
                 </label>
                 <select
@@ -322,7 +363,7 @@ export const DatasetDetailPage: React.FC = () => {
                   onChange={(e) =>
                     setMappingForm({ ...mappingForm, category_column: e.target.value })
                   }
-                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-200 focus:outline-none focus:border-brand-500 font-mono"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 font-mono"
                 >
                   <option value="">(Auto-detect)</option>
                   {allColumns.map((col) => (
@@ -335,7 +376,7 @@ export const DatasetDetailPage: React.FC = () => {
 
               {/* Region */}
               <div>
-                <label className="block font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                <label className="block font-semibold uppercase tracking-wider text-slate-600 mb-1">
                   Region Column
                 </label>
                 <select
@@ -343,7 +384,7 @@ export const DatasetDetailPage: React.FC = () => {
                   onChange={(e) =>
                     setMappingForm({ ...mappingForm, region_column: e.target.value })
                   }
-                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-200 focus:outline-none focus:border-brand-500 font-mono"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 font-mono"
                 >
                   <option value="">(Auto-detect)</option>
                   {allColumns.map((col) => (
@@ -356,7 +397,7 @@ export const DatasetDetailPage: React.FC = () => {
 
               {/* Product */}
               <div>
-                <label className="block font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                <label className="block font-semibold uppercase tracking-wider text-slate-600 mb-1">
                   Product Column
                 </label>
                 <select
@@ -364,7 +405,7 @@ export const DatasetDetailPage: React.FC = () => {
                   onChange={(e) =>
                     setMappingForm({ ...mappingForm, product_column: e.target.value })
                   }
-                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-200 focus:outline-none focus:border-brand-500 font-mono"
+                  className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-900 focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 font-mono"
                 >
                   <option value="">(Auto-detect)</option>
                   {allColumns.map((col) => (
@@ -376,7 +417,7 @@ export const DatasetDetailPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-200">
               <button
                 type="button"
                 onClick={() => {
@@ -392,7 +433,7 @@ export const DatasetDetailPage: React.FC = () => {
                     });
                   }
                 }}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 Reset
@@ -401,7 +442,7 @@ export const DatasetDetailPage: React.FC = () => {
               <button
                 type="submit"
                 disabled={isUpdatingMapping}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-medium text-xs shadow-md shadow-brand-500/20 disabled:opacity-50 cursor-pointer"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs shadow-sm disabled:opacity-50 cursor-pointer"
               >
                 <Save className="w-3.5 h-3.5" />
                 {isUpdatingMapping ? 'Recomputing...' : 'Apply & Recompute'}
@@ -420,7 +461,7 @@ export const DatasetDetailPage: React.FC = () => {
               value={analytics.kpis.total_revenue}
               format="currency"
               change={analytics.kpis.growth_percentage}
-              icon={<DollarSign className="w-5 h-5 text-indigo-400" />}
+              icon={<DollarSign className="w-5 h-5 text-blue-600" />}
               colorScheme="indigo"
               changePeriod={
                 analytics.growth_summary
@@ -433,7 +474,7 @@ export const DatasetDetailPage: React.FC = () => {
               title="Total Orders"
               value={analytics.kpis.total_orders}
               format="number"
-              icon={<ShoppingCart className="w-5 h-5 text-emerald-400" />}
+              icon={<ShoppingCart className="w-5 h-5 text-emerald-600" />}
               colorScheme="emerald"
               subtitle={
                 analytics.column_mapping.order_id_column
@@ -446,7 +487,7 @@ export const DatasetDetailPage: React.FC = () => {
               title="Unique Customers"
               value={analytics.kpis.unique_customers}
               format="number"
-              icon={<Users className="w-5 h-5 text-cyan-400" />}
+              icon={<Users className="w-5 h-5 text-sky-600" />}
               colorScheme="cyan"
               subtitle={
                 analytics.column_mapping.customer_column
@@ -459,11 +500,19 @@ export const DatasetDetailPage: React.FC = () => {
               title="Average Order Value"
               value={analytics.kpis.average_order_value}
               format="currency"
-              icon={<CreditCard className="w-5 h-5 text-purple-400" />}
+              icon={<CreditCard className="w-5 h-5 text-indigo-600" />}
               colorScheme="purple"
               subtitle="Revenue per transaction"
             />
           </div>
+
+          {/* AI Natural Language Insights (Grounded in Verified Analytics) */}
+          <AiInsightsCard
+            insights={aiInsights}
+            loading={loadingInsights}
+            onRegenerate={handleRegenerateInsights}
+            isRegenerating={isRegeneratingInsights}
+          />
 
           {/* Charts Row 1 */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

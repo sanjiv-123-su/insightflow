@@ -2,10 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { datasetService } from '../services/datasetService';
 import { analyticsService } from '../services/analyticsService';
+import { aiInsightsService } from '../services/aiInsightsService';
 import { getErrorMessage } from '../services/api';
-import type { Dataset, DatasetAnalyticsResponse } from '../types';
+import type { Dataset, DatasetAnalyticsResponse, AiInsightsResponse } from '../types';
 
 import { KpiCard } from '../components/cards/KpiCard';
+import { AiInsightsCard } from '../components/insights/AiInsightsCard';
 import { RevenueTrendChart } from '../components/charts/RevenueTrendChart';
 import { CategoryDonutChart } from '../components/charts/CategoryDonutChart';
 import { RegionBarChart } from '../components/charts/RegionBarChart';
@@ -36,6 +38,11 @@ export const DashboardPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
 
+  // AI Insights state
+  const [aiInsights, setAiInsights] = useState<AiInsightsResponse | null>(null);
+  const [loadingInsights, setLoadingInsights] = useState(false);
+  const [isRegeneratingInsights, setIsRegeneratingInsights] = useState(false);
+
   // Fetch datasets list
   const fetchDatasets = useCallback(async () => {
     setLoadingDatasets(true);
@@ -52,6 +59,7 @@ export const DashboardPage: React.FC = () => {
       } else {
         setSelectedDatasetId(null);
         setAnalytics(null);
+        setAiInsights(null);
       }
     } catch (err) {
       setError(getErrorMessage(err));
@@ -67,13 +75,39 @@ export const DashboardPage: React.FC = () => {
     try {
       const result = await analyticsService.getDatasetAnalytics(datasetId);
       setAnalytics(result);
+
+      // Load AI Insights in background only after normal analytics works
+      if (result && result.kpis && result.kpis.total_revenue > 0) {
+        setLoadingInsights(true);
+        aiInsightsService
+          .getAiInsights(datasetId)
+          .then((res) => setAiInsights(res))
+          .catch((err) => console.log('AI Insights loading info:', err))
+          .finally(() => setLoadingInsights(false));
+      } else {
+        setAiInsights(null);
+      }
     } catch (err) {
       setError(getErrorMessage(err));
       setAnalytics(null);
+      setAiInsights(null);
     } finally {
       setLoadingAnalytics(false);
     }
   }, []);
+
+  const handleRegenerateInsights = async () => {
+    if (!selectedDatasetId) return;
+    setIsRegeneratingInsights(true);
+    try {
+      const fresh = await aiInsightsService.regenerateAiInsights(selectedDatasetId);
+      setAiInsights(fresh);
+    } catch (err) {
+      console.error('Failed to regenerate AI insights:', err);
+    } finally {
+      setIsRegeneratingInsights(false);
+    }
+  };
 
   useEffect(() => {
     fetchDatasets();
@@ -98,8 +132,8 @@ export const DashboardPage: React.FC = () => {
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">Analytics Dashboard</h1>
-            <p className="text-sm text-slate-400 mt-1">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Analytics Dashboard</h1>
+            <p className="text-sm text-slate-600 mt-1">
               Upload your first business dataset to automatically generate insights
             </p>
           </div>
@@ -128,12 +162,12 @@ export const DashboardPage: React.FC = () => {
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
       {/* Top Bar: Title, Dataset Switcher, Quick Actions */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-2 border-b border-slate-800/80">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-4 border-b border-slate-200/80">
         <div>
-          <h1 className="text-2xl lg:text-3xl font-bold tracking-tight text-white">
+          <h1 className="text-2xl lg:text-3xl font-bold tracking-tight text-slate-900">
             Analytics Dashboard
           </h1>
-          <p className="text-xs sm:text-sm text-slate-400 mt-1">
+          <p className="text-xs sm:text-sm text-slate-600 mt-1">
             Real-time business performance metrics computed directly from your uploaded data
           </p>
         </div>
@@ -141,13 +175,13 @@ export const DashboardPage: React.FC = () => {
         <div className="flex items-center flex-wrap gap-3">
           {/* Dataset Switcher Dropdown */}
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 hidden sm:inline">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 hidden sm:inline">
               Dataset:
             </span>
             <select
               value={selectedDatasetId || ''}
               onChange={(e) => setSelectedDatasetId(e.target.value)}
-              className="px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-200 text-xs sm:text-sm font-medium focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 cursor-pointer max-w-[220px] truncate"
+              className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-800 text-xs sm:text-sm font-medium focus:outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 shadow-2xs cursor-pointer max-w-[220px] truncate"
             >
               {datasets.map((d) => (
                 <option key={d.id} value={d.id}>
@@ -161,19 +195,19 @@ export const DashboardPage: React.FC = () => {
             <div className="flex items-center gap-2">
               <Link
                 to={`/datasets/${selectedDatasetId}`}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-xs font-semibold text-slate-300 hover:text-white transition-colors"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 hover:text-slate-900 shadow-2xs transition-colors"
                 title="Configure Column Mappings"
               >
-                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500" />
                 <span className="hidden sm:inline">Mapping</span>
               </Link>
 
               <Link
                 to={`/datasets/${selectedDatasetId}/profile`}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-xs font-semibold text-slate-300 hover:text-white transition-colors"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 hover:text-slate-900 shadow-2xs transition-colors"
                 title="View Data Profile & Quality"
               >
-                <FileSearch className="w-3.5 h-3.5" />
+                <FileSearch className="w-3.5 h-3.5 text-slate-500" />
                 <span className="hidden sm:inline">Profile</span>
               </Link>
             </div>
@@ -181,46 +215,46 @@ export const DashboardPage: React.FC = () => {
 
           <button
             onClick={() => setIsUploadOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-medium text-xs transition-all shadow-md shadow-brand-500/20 cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs sm:text-sm transition-colors shadow-xs hover:shadow cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Upload</span>
+            <Plus className="w-4 h-4" />
+            <span>Upload Dataset</span>
           </button>
         </div>
       </div>
 
       {/* Dataset quick metadata badge bar */}
       {selectedDataset && (
-        <div className="flex items-center flex-wrap gap-4 text-xs text-slate-400 bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
+        <div className="flex items-center flex-wrap gap-4 text-xs text-slate-600 bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-2xs">
           <div className="flex items-center gap-1.5">
-            <FileSpreadsheet className="w-4 h-4 text-brand-400" />
-            <span className="font-semibold text-slate-200">{selectedDataset.name}</span>
-            <span className="text-slate-400">({selectedDataset.original_filename})</span>
+            <FileSpreadsheet className="w-4 h-4 text-blue-600" />
+            <span className="font-semibold text-slate-900">{selectedDataset.name}</span>
+            <span className="text-slate-500">({selectedDataset.original_filename})</span>
           </div>
-          <span>&bull;</span>
+          <span className="text-slate-300">&bull;</span>
           <div>
-            Format: <span className="font-semibold text-slate-300 uppercase">{selectedDataset.file_type}</span>
+            Format: <span className="font-semibold text-slate-700 uppercase">{selectedDataset.file_type}</span>
           </div>
           {selectedDataset.row_count !== null && selectedDataset.row_count !== undefined && (
             <>
-              <span>&bull;</span>
+              <span className="text-slate-300">&bull;</span>
               <div>
-                Rows: <span className="font-semibold text-slate-300">{selectedDataset.row_count.toLocaleString()}</span>
+                Rows: <span className="font-semibold text-slate-700">{selectedDataset.row_count.toLocaleString()}</span>
               </div>
             </>
           )}
           {selectedDataset.column_count !== null && selectedDataset.column_count !== undefined && (
             <>
-              <span>&bull;</span>
+              <span className="text-slate-300">&bull;</span>
               <div>
-                Columns: <span className="font-semibold text-slate-300">{selectedDataset.column_count}</span>
+                Columns: <span className="font-semibold text-slate-700">{selectedDataset.column_count}</span>
               </div>
             </>
           )}
           {analytics?.column_mapping.revenue_column && (
             <>
-              <span>&bull;</span>
-              <div className="text-brand-300">
+              <span className="text-slate-300">&bull;</span>
+              <div className="text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
                 Revenue Column: <span className="font-mono font-semibold">{analytics.column_mapping.revenue_column}</span>
               </div>
             </>
@@ -299,6 +333,14 @@ export const DashboardPage: React.FC = () => {
               subtitle="Revenue per transaction"
             />
           </div>
+
+          {/* AI Natural Language Insights (Grounded in Verified Analytics) */}
+          <AiInsightsCard
+            insights={aiInsights}
+            loading={loadingInsights}
+            onRegenerate={handleRegenerateInsights}
+            isRegenerating={isRegeneratingInsights}
+          />
 
           {/* 2. Charts Section - Row 1: Revenue Trend (full or 2/3) + Category Donut (1/3) */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

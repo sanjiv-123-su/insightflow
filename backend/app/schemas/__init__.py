@@ -32,6 +32,7 @@ from app.schemas.profiling import (
     ProfileWarnings,
 )
 
+from app.schemas.ai_insights import AiInsightsResponse
 from app.schemas.sql_explorer import (
     SavedQueryCreate,
     SavedQueryResponse,
@@ -41,6 +42,7 @@ from app.schemas.sql_explorer import (
 )
 
 __all__ = [
+    "AiInsightsResponse",
     "CategoryRevenuePoint",
     "ColumnMappingInput",
     "ColumnProfile",

@@ -34,10 +34,10 @@ export const TopProductsTable: React.FC<TopProductsTableProps> = ({
     <div className="glass-panel rounded-2xl p-6 flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h4 className="text-base font-semibold text-slate-100">{title}</h4>
-          <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>
+          <h4 className="text-base font-bold text-slate-900">{title}</h4>
+          <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
         </div>
-        <span className="text-xs text-brand-400 font-medium bg-brand-500/10 px-2.5 py-1 rounded-lg border border-brand-500/20 flex items-center gap-1">
+        <span className="text-xs text-blue-700 font-medium bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200/80 flex items-center gap-1">
           <Award className="w-3.5 h-3.5" />
           Top {products.length}
         </span>
@@ -46,55 +46,55 @@ export const TopProductsTable: React.FC<TopProductsTableProps> = ({
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs">
           <thead>
-            <tr className="border-b border-slate-700/70 text-slate-400">
-              <th className="pb-3 font-semibold w-12">#</th>
-              <th className="pb-3 font-semibold">Product</th>
-              <th className="pb-3 font-semibold text-right">Orders</th>
+            <tr className="border-b border-slate-200 text-slate-500 font-semibold">
+              <th className="pb-3 w-12">#</th>
+              <th className="pb-3">Product</th>
+              <th className="pb-3 text-right">Orders</th>
               {products.some((p) => p.units_sold !== null && p.units_sold !== undefined) && (
-                <th className="pb-3 font-semibold text-right">Units</th>
+                <th className="pb-3 text-right">Units</th>
               )}
-              <th className="pb-3 font-semibold text-right">Revenue</th>
+              <th className="pb-3 text-right">Revenue</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800/60">
+          <tbody className="divide-y divide-slate-100">
             {products.map((item, index) => {
               const percentage = (item.revenue / maxRevenue) * 100;
               return (
-                <tr key={`${item.product}-${index}`} className="hover:bg-slate-800/40 transition-colors">
-                  <td className="py-3 font-mono text-slate-400">
+                <tr key={`${item.product}-${index}`} className="hover:bg-slate-50/80 transition-colors">
+                  <td className="py-3 font-mono text-slate-500">
                     <span
                       className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${
                         index === 0
-                          ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
                           : index === 1
-                          ? 'bg-slate-400/20 text-slate-300 border border-slate-400/40'
+                          ? 'bg-slate-100 text-slate-700 border border-slate-300'
                           : index === 2
-                          ? 'bg-amber-700/20 text-amber-600 border border-amber-700/40'
-                          : 'text-slate-400'
+                          ? 'bg-amber-50 text-amber-800 border border-amber-200'
+                          : 'text-slate-500'
                       }`}
                     >
                       {index + 1}
                     </span>
                   </td>
-                  <td className="py-3 font-medium text-slate-200">
+                  <td className="py-3 font-medium text-slate-900">
                     <div className="max-w-[200px] truncate" title={item.product}>
                       {item.product}
                     </div>
                     {/* Visual bar */}
-                    <div className="w-24 bg-slate-800 h-1 rounded-full mt-1.5 overflow-hidden">
+                    <div className="w-24 bg-slate-100 h-1 rounded-full mt-1.5 overflow-hidden">
                       <div
-                        className="bg-brand-500 h-full rounded-full"
+                        className="bg-blue-600 h-full rounded-full"
                         style={{ width: `${percentage}%` }}
                       />
                     </div>
                   </td>
-                  <td className="py-3 text-right text-slate-300 font-mono">{item.orders}</td>
+                  <td className="py-3 text-right text-slate-600 font-mono">{item.orders}</td>
                   {products.some((p) => p.units_sold !== null && p.units_sold !== undefined) && (
-                    <td className="py-3 text-right text-slate-300 font-mono">
+                    <td className="py-3 text-right text-slate-600 font-mono">
                       {item.units_sold ?? '—'}
                     </td>
                   )}
-                  <td className="py-3 text-right font-bold text-white font-mono">
+                  <td className="py-3 text-right font-bold text-slate-900 font-mono">
                     {new Intl.NumberFormat('en-US', {
                       style: 'currency',
                       currency: 'USD',

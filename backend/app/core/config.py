@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_BYTES: int = 50 * 1024 * 1024  # 50 MB
     UPLOAD_DIR: Optional[str] = None
 
+    # AI Insights Settings
+    GEMINI_API_KEY: Optional[str] = None
+    OPENAI_API_KEY: Optional[str] = None
+    AI_MODEL: str = "gemini-1.5-flash"
+
     @property
     def upload_path(self) -> Path:
         """Resolve the uploads directory path outside source-code directory."""
